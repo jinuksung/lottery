@@ -1,0 +1,88 @@
+import { describe, expect, test } from "vitest";
+import { AppErrorCode } from "../../src/core/errors";
+import {
+  buildInitialNavigationUrl,
+  buildLoginUrlCandidates,
+  buildPostLoginHomeUrl,
+  calculateRequiredAmount,
+  ensureSufficientDeposit,
+  isKnownDhlotteryErrorPage,
+  pickLotto645PurchaseFrameIndex,
+  pickFirstVisibleIndex,
+  resolvePopupPageIndex,
+  progressDescription
+} from "../../src/lottery/client";
+
+describe("lottery/client logic", () => {
+  test("calculates required amount by game count", () => {
+    expect(calculateRequiredAmount(5, 1000)).toBe(5000);
+  });
+
+  test("throws Err01 when deposit is insufficient", () => {
+    try {
+      ensureSufficientDeposit(3000, 5000);
+      throw new Error("expected error");
+    } catch (error) {
+      expect(error).toHaveProperty("code", AppErrorCode.ERR01_INSUFFICIENT_DEPOSIT);
+    }
+  });
+
+  test("builds section progress descriptions", () => {
+    expect(progressDescription(2, 5)).toContain("로그인을 완료했습니다");
+  });
+
+  test("detects dhlottery error page response", () => {
+    expect(isKnownDhlotteryErrorPage("https://www.dhlottery.co.kr/errorPage", "동행복권")).toBe(true);
+    expect(
+      isKnownDhlotteryErrorPage(
+        "https://www.dhlottery.co.kr/common.do?method=main",
+        "잘못된 접근입니다. 정상적인 경로를 이용해주세요."
+      )
+    ).toBe(true);
+    expect(
+      isKnownDhlotteryErrorPage("https://www.dhlottery.co.kr/user.do?method=login&returnUrl=", "로그인")
+    ).toBe(false);
+  });
+
+  test("prefers /login as the first login url candidate", () => {
+    const candidates = buildLoginUrlCandidates("https://www.dhlottery.co.kr");
+    expect(candidates[0]).toBe("https://www.dhlottery.co.kr/login");
+  });
+
+  test("uses login page as the initial navigation target", () => {
+    expect(buildInitialNavigationUrl("https://www.dhlottery.co.kr")).toBe(
+      "https://www.dhlottery.co.kr/login"
+    );
+  });
+
+  test("uses mypage home as the post-login deposit check target", () => {
+    expect(buildPostLoginHomeUrl("https://www.dhlottery.co.kr")).toBe(
+      "https://www.dhlottery.co.kr/mypage/home"
+    );
+  });
+
+  test("prefers the first visible match over earlier hidden matches", () => {
+    expect(pickFirstVisibleIndex([false, true, true])).toBe(1);
+    expect(pickFirstVisibleIndex([false, false])).toBe(-1);
+    expect(pickFirstVisibleIndex([true, false])).toBe(0);
+  });
+
+  test("uses the newest page when popup window is opened", () => {
+    expect(resolvePopupPageIndex(1, 2)).toBe(1);
+    expect(resolvePopupPageIndex(2, 4)).toBe(3);
+    expect(resolvePopupPageIndex(2, 2)).toBe(-1);
+  });
+
+  test("prefers the lotto645 inner frame when popup hosts the real purchase ui in an iframe", () => {
+    expect(
+      pickLotto645PurchaseFrameIndex([
+        "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40",
+        "https://ol.dhlottery.co.kr/olotto/game/game645.do",
+        "https://www.youtube.com/embed/U0g0LyuwRx4?enablejsapi=1"
+      ])
+    ).toBe(1);
+    expect(
+      pickLotto645PurchaseFrameIndex(["https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40"])
+    ).toBe(-1);
+  });
+});

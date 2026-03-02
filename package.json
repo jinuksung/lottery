@@ -1,0 +1,23 @@
+{
+  "name": "lottery-run-once",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest",
+    "run-once": "npm run build && node dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "playwright": "^1.56.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
