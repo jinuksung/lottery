@@ -1,4 +1,4 @@
-import { chromium, type Frame, type Locator, type Page } from "playwright";
+import { chromium, type BrowserContextOptions, type Frame, type Locator, type Page } from "playwright";
 import type { AppConfig } from "../core/config";
 import { AppError, AppErrorCode } from "../core/errors";
 import type { Logger } from "../core/logger";
@@ -121,6 +121,8 @@ const bodyText = async (surface: PurchaseSurface): Promise<string> => {
 
 const normalizeBaseUrl = (baseUrl: string): string => baseUrl.replace(/\/$/, "");
 const PURCHASE_SURFACE_TEXT_HINTS = ["자동번호발급", "적용수량", "로또구매방법선택"] as const;
+const DESKTOP_CHROME_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
 export const pickFirstVisibleIndex = (visibilityStates: boolean[]): number =>
   visibilityStates.findIndex((isVisible) => isVisible);
@@ -144,6 +146,12 @@ export const pickPopupPageIndexFromSnapshots = (
 
 export const pickLotto645PurchaseFrameIndex = (frameUrls: string[]): number =>
   frameUrls.findIndex((url) => url.includes("/game645.do"));
+
+export const buildBrowserContextOptions = (): BrowserContextOptions => ({
+  viewport: { width: 1400, height: 1000 },
+  locale: "ko-KR",
+  userAgent: DESKTOP_CHROME_USER_AGENT
+});
 
 export const collectPurchaseTextHints = (frameText: string): string[] => {
   const normalizedText = frameText.replaceAll(/\s+/g, "");
@@ -410,6 +418,10 @@ export const buildPurchasePageUrlCandidates = (baseUrl: string): string[] => [
   `${baseUrl}/game.do?method=buyLotto&drwNo=latest`
 ];
 
+export const isConfirmedPurchaseSurfaceReason = (
+  reason: "url" | "text" | "selectors" | "fallback"
+): boolean => reason !== "fallback";
+
 const isCredentialError = (pageText: string): boolean => {
   const normalized = pageText.replaceAll(" ", "");
   return ["아이디혹은비밀번호", "비밀번호가일치하지", "로그인에실패"].some((token) =>
@@ -565,6 +577,7 @@ const goToPurchasePage = async (
   selectors: SelectorGroups
 ): Promise<PurchaseNavigationResult> => {
   const attempts: PurchaseNavigationAttempt[] = [];
+  let preferredDirectNavigationPage: Page = page;
   const pageCountBeforeScriptOpen = page.context().pages().length;
   const canUseGameFunction = await page
     .evaluate(() => typeof (window as { gmUtil?: { goGameClsf?: unknown } }).gmUtil?.goGameClsf === "function")
@@ -586,17 +599,20 @@ const goToPurchasePage = async (
       popupPageUrls: popupWait.pageUrls
     };
     if (popupWait.popupPage) {
+      preferredDirectNavigationPage = popupWait.popupPage;
       applyDialogAutoAccept(popupWait.popupPage);
       const resolved = await resolvePurchaseSurface(popupWait.popupPage, selectors);
       attempt.resolution = resolved.resolution;
-      attempts.push(attempt);
-      return {
-        surface: resolved.surface,
-        debug: {
-          chosenStrategy: attempt.strategy,
-          attempts
-        }
-      };
+      if (isConfirmedPurchaseSurfaceReason(resolved.resolution.selectedReason)) {
+        attempts.push(attempt);
+        return {
+          surface: resolved.surface,
+          debug: {
+            chosenStrategy: attempt.strategy,
+            attempts
+          }
+        };
+      }
     }
     attempts.push(attempt);
   }
@@ -613,17 +629,20 @@ const goToPurchasePage = async (
     entryAttempt.popupSnapshotCounts = popupWait.snapshotCounts;
     entryAttempt.popupPageUrls = popupWait.pageUrls;
     if (popupWait.popupPage) {
+      preferredDirectNavigationPage = popupWait.popupPage;
       applyDialogAutoAccept(popupWait.popupPage);
       const resolved = await resolvePurchaseSurface(popupWait.popupPage, selectors);
       entryAttempt.resolution = resolved.resolution;
-      attempts.push(entryAttempt);
-      return {
-        surface: resolved.surface,
-        debug: {
-          chosenStrategy: entryAttempt.strategy,
-          attempts
-        }
-      };
+      if (isConfirmedPurchaseSurfaceReason(resolved.resolution.selectedReason)) {
+        attempts.push(entryAttempt);
+        return {
+          surface: resolved.surface,
+          debug: {
+            chosenStrategy: entryAttempt.strategy,
+            attempts
+          }
+        };
+      }
     }
 
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
@@ -631,14 +650,16 @@ const goToPurchasePage = async (
     if (clickedPageText.includes("로또") || clickedPageText.includes("구매")) {
       const resolved = await resolvePurchaseSurface(page, selectors);
       entryAttempt.resolution = resolved.resolution;
-      attempts.push(entryAttempt);
-      return {
-        surface: resolved.surface,
-        debug: {
-          chosenStrategy: `${entryAttempt.strategy}-same-page`,
-          attempts
-        }
-      };
+      if (isConfirmedPurchaseSurfaceReason(resolved.resolution.selectedReason)) {
+        attempts.push(entryAttempt);
+        return {
+          surface: resolved.surface,
+          debug: {
+            chosenStrategy: `${entryAttempt.strategy}-same-page`,
+            attempts
+          }
+        };
+      }
     }
   }
   attempts.push(entryAttempt);
@@ -650,19 +671,23 @@ const goToPurchasePage = async (
       strategy: "direct-url",
       destinationUrl: url
     };
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => undefined);
-    const text = await bodyText(page);
+    await preferredDirectNavigationPage
+      .goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 })
+      .catch(() => undefined);
+    const text = await bodyText(preferredDirectNavigationPage);
     if (text.includes("로또") || text.includes("구매")) {
-      const resolved = await resolvePurchaseSurface(page, selectors);
+      const resolved = await resolvePurchaseSurface(preferredDirectNavigationPage, selectors);
       directAttempt.resolution = resolved.resolution;
-      attempts.push(directAttempt);
-      return {
-        surface: resolved.surface,
-        debug: {
-          chosenStrategy: directAttempt.strategy,
-          attempts
-        }
-      };
+      if (isConfirmedPurchaseSurfaceReason(resolved.resolution.selectedReason)) {
+        attempts.push(directAttempt);
+        return {
+          surface: resolved.surface,
+          debug: {
+            chosenStrategy: directAttempt.strategy,
+            attempts
+          }
+        };
+      }
     }
     attempts.push(directAttempt);
   }
@@ -845,7 +870,7 @@ export const runLotteryPurchaseOnce = async (
   });
 
   const context = await browser.newContext({
-    viewport: { width: 1400, height: 1000 }
+    ...buildBrowserContextOptions()
   });
   const page = await context.newPage();
   applyDialogAutoAccept(page);

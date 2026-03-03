@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { AppErrorCode } from "../../src/core/errors";
 import {
+  buildBrowserContextOptions,
   buildPurchasePageUrlCandidates,
   buildInitialNavigationUrl,
   buildLoginUrlCandidates,
@@ -8,6 +9,7 @@ import {
   calculateRequiredAmount,
   ensureSufficientDeposit,
   hasPurchaseSelectorHints,
+  isConfirmedPurchaseSurfaceReason,
   isKnownDhlotteryErrorPage,
   isLikelyLotto645PurchaseFrame,
   pickPopupPageIndexFromSnapshots,
@@ -72,6 +74,14 @@ describe("lottery/client logic", () => {
     ]);
   });
 
+  test("uses a fixed desktop browser context to avoid mobile redirects", () => {
+    const options = buildBrowserContextOptions();
+    expect(options.viewport).toEqual({ width: 1400, height: 1000 });
+    expect(options.userAgent).toContain("Chrome");
+    expect(options.userAgent).not.toContain("HeadlessChrome");
+    expect(options.locale).toBe("ko-KR");
+  });
+
   test("prefers the first visible match over earlier hidden matches", () => {
     expect(pickFirstVisibleIndex([false, true, true])).toBe(1);
     expect(pickFirstVisibleIndex([false, false])).toBe(-1);
@@ -127,5 +137,12 @@ describe("lottery/client logic", () => {
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 1, purchaseButton: 0 })).toBe(true);
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 1 })).toBe(true);
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 0 })).toBe(false);
+  });
+
+  test("does not treat fallback purchase resolutions as confirmed", () => {
+    expect(isConfirmedPurchaseSurfaceReason("fallback")).toBe(false);
+    expect(isConfirmedPurchaseSurfaceReason("url")).toBe(true);
+    expect(isConfirmedPurchaseSurfaceReason("text")).toBe(true);
+    expect(isConfirmedPurchaseSurfaceReason("selectors")).toBe(true);
   });
 });
