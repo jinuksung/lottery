@@ -67,27 +67,39 @@ describe("app orchestration", () => {
 
   test("returns mapped exit code and sends error message on AppError", async () => {
     const sentMessages: string[] = [];
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn()
+    };
 
     const exitCode = await runApp({
       cwd: "/tmp",
       loadConfig: () => sampleConfig,
-      createLogger: () => ({
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn()
-      }),
+      createLogger: () => logger,
       createTelegramClient: () => ({
         send: async (message: string) => {
           sentMessages.push(message);
         }
       }),
       runLotteryPurchaseOnce: async () => {
-        throw new AppError(AppErrorCode.ERR01_INSUFFICIENT_DEPOSIT, "예치금 부족");
+        throw new AppError(AppErrorCode.ERR01_INSUFFICIENT_DEPOSIT, "예치금 부족", {
+          availableDeposit: 0,
+          requiredDeposit: 1000
+        });
       },
       appendPurchaseHistory: async () => undefined
     });
 
     expect(exitCode).toBe(11);
     expect(sentMessages.at(-1)).toContain("Err01");
+    expect(logger.error).toHaveBeenCalledWith("run-once 구매 프로세스 실패", {
+      code: AppErrorCode.ERR01_INSUFFICIENT_DEPOSIT,
+      details: {
+        availableDeposit: 0,
+        requiredDeposit: 1000
+      },
+      message: "[Err01] 예치금 부족"
+    });
   });
 });

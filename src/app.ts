@@ -104,6 +104,7 @@ export const runApp = async (deps: AppDependencies = {}): Promise<number> => {
 
     logger.error("run-once 구매 프로세스 실패", {
       code: appErrorCode,
+      details: isAppError(error) ? error.details : undefined,
       message: formatted
     });
 

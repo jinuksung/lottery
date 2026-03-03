@@ -13,6 +13,54 @@ import { mergeSelectorOverrides, type SelectorGroups } from "./selectors";
 const TOTAL_STEPS = 5;
 type PurchaseSurface = Frame | Page;
 
+interface PurchaseSelectorCounts {
+  gameCount: number;
+  gameCountInput: number;
+  autoSelect: number;
+  purchaseButton: number;
+}
+
+interface PurchaseSurfaceProbe {
+  target: "page" | "frame";
+  url: string;
+  counts: PurchaseSelectorCounts;
+  textHints: string[];
+  matchedByUrl: boolean;
+  matchedByText: boolean;
+  matchedBySelectors: boolean;
+}
+
+interface PurchaseSurfaceResolution {
+  selectedTarget: "page" | "frame";
+  selectedUrl: string;
+  selectedReason: "url" | "text" | "selectors" | "fallback";
+  pageUrl: string;
+  candidates: PurchaseSurfaceProbe[];
+}
+
+interface PopupWaitResult {
+  popupPage: Page | null;
+  snapshotCounts: number[];
+  pageUrls: string[];
+}
+
+interface PurchaseNavigationAttempt {
+  strategy: string;
+  popupSnapshotCounts?: number[];
+  popupPageUrls?: string[];
+  entryFound?: boolean;
+  destinationUrl?: string;
+  resolution?: PurchaseSurfaceResolution;
+}
+
+interface PurchaseNavigationResult {
+  surface: PurchaseSurface;
+  debug: {
+    chosenStrategy: string;
+    attempts: PurchaseNavigationAttempt[];
+  };
+}
+
 export interface RunOnceResult {
   purchasedAt: string;
   drawNo: number;
@@ -72,6 +120,7 @@ const bodyText = async (surface: PurchaseSurface): Promise<string> => {
 };
 
 const normalizeBaseUrl = (baseUrl: string): string => baseUrl.replace(/\/$/, "");
+const PURCHASE_SURFACE_TEXT_HINTS = ["자동번호발급", "적용수량", "로또구매방법선택"] as const;
 
 export const pickFirstVisibleIndex = (visibilityStates: boolean[]): number =>
   visibilityStates.findIndex((isVisible) => isVisible);
@@ -96,23 +145,29 @@ export const pickPopupPageIndexFromSnapshots = (
 export const pickLotto645PurchaseFrameIndex = (frameUrls: string[]): number =>
   frameUrls.findIndex((url) => url.includes("/game645.do"));
 
+export const collectPurchaseTextHints = (frameText: string): string[] => {
+  const normalizedText = frameText.replaceAll(/\s+/g, "");
+  return PURCHASE_SURFACE_TEXT_HINTS.filter((token) => normalizedText.includes(token));
+};
+
 export const isLikelyLotto645PurchaseFrame = (frameUrl: string, frameText: string): boolean => {
   if (frameUrl.includes("/game645.do")) {
     return true;
   }
 
-  const normalizedText = frameText.replaceAll(/\s+/g, "");
-  const matchedHintCount = ["자동번호발급", "적용수량", "로또구매방법선택"].filter((token) =>
-    normalizedText.includes(token)
-  ).length;
-  return matchedHintCount >= 2;
+  return collectPurchaseTextHints(frameText).length >= 2;
 };
 
 export const hasPurchaseSelectorHints = (counts: {
   gameCount: number;
+  gameCountInput?: number;
   autoSelect: number;
   purchaseButton: number;
-}): boolean => counts.gameCount > 0 || counts.autoSelect > 0 || counts.purchaseButton > 0;
+}): boolean =>
+  counts.gameCount > 0 ||
+  (counts.gameCountInput ?? 0) > 0 ||
+  counts.autoSelect > 0 ||
+  counts.purchaseButton > 0;
 
 const countSelectors = async (surface: PurchaseSurface, selectors: string[]): Promise<number> => {
   for (const selector of selectors) {
@@ -125,22 +180,64 @@ const countSelectors = async (surface: PurchaseSurface, selectors: string[]): Pr
   return 0;
 };
 
-const waitForPopupPage = async (page: Page, pageCountBeforeClick: number, timeoutMs: number): Promise<Page | null> => {
+const buildPurchaseSelectorCounts = async (
+  surface: PurchaseSurface,
+  selectors: SelectorGroups
+): Promise<PurchaseSelectorCounts> => ({
+  gameCount: await countSelectors(surface, selectors.gameCountSelect),
+  gameCountInput: await countSelectors(surface, selectors.gameCountInput),
+  autoSelect: await countSelectors(surface, selectors.autoSelectTab),
+  purchaseButton: await countSelectors(surface, selectors.purchaseButton)
+});
+
+const buildPurchaseSurfaceProbe = async (
+  surface: PurchaseSurface,
+  target: "page" | "frame",
+  selectors: SelectorGroups
+): Promise<PurchaseSurfaceProbe> => {
+  const text = await bodyText(surface);
+  const textHints = collectPurchaseTextHints(text);
+  return {
+    target,
+    url: surface.url(),
+    counts: await buildPurchaseSelectorCounts(surface, selectors),
+    textHints,
+    matchedByUrl: surface.url().includes("/game645.do"),
+    matchedByText: textHints.length >= 2,
+    matchedBySelectors: false
+  };
+};
+
+const waitForPopupPage = async (
+  page: Page,
+  pageCountBeforeClick: number,
+  timeoutMs: number
+): Promise<PopupWaitResult> => {
   const deadline = Date.now() + timeoutMs;
   const snapshotCounts: number[] = [];
+  let pageUrls: string[] = [];
 
   while (Date.now() < deadline) {
     const pages = page.context().pages();
+    pageUrls = pages.map((candidatePage) => candidatePage.url());
     snapshotCounts.push(pages.length);
     const popupPageIndex = pickPopupPageIndexFromSnapshots(pageCountBeforeClick, snapshotCounts);
     if (popupPageIndex >= 0) {
-      return pages[popupPageIndex] ?? null;
+      return {
+        popupPage: pages[popupPageIndex] ?? null,
+        snapshotCounts,
+        pageUrls
+      };
     }
 
     await sleep(500);
   }
 
-  return null;
+  return {
+    popupPage: null,
+    snapshotCounts,
+    pageUrls
+  };
 };
 
 const findFirstVisibleMatch = async (surface: PurchaseSurface, selector: string): Promise<Locator | null> => {
@@ -306,6 +403,12 @@ export const buildLoginUrlCandidates = (baseUrl: string): string[] => [
 export const buildInitialNavigationUrl = (baseUrl: string): string => buildLoginUrlCandidates(baseUrl)[0];
 
 export const buildPostLoginHomeUrl = (baseUrl: string): string => `${baseUrl}/mypage/home`;
+export const buildPurchasePageUrlCandidates = (baseUrl: string): string[] => [
+  "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40",
+  "https://ol.dhlottery.co.kr/olotto/game/game645.do",
+  `${baseUrl}/game.do?method=buyLotto`,
+  `${baseUrl}/game.do?method=buyLotto&drwNo=latest`
+];
 
 const isCredentialError = (pageText: string): boolean => {
   const normalized = pageText.replaceAll(" ", "");
@@ -372,49 +475,96 @@ const attemptExtractPurchase = async (
   }
 };
 
-const resolvePurchaseSurface = async (page: Page, selectors: SelectorGroups): Promise<PurchaseSurface> => {
+const resolvePurchaseSurface = async (
+  page: Page,
+  selectors: SelectorGroups
+): Promise<{ surface: PurchaseSurface; resolution: PurchaseSurfaceResolution }> => {
   await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
   const deadline = Date.now() + 15_000;
+  let lastCandidates: PurchaseSurfaceProbe[] = [];
 
   while (Date.now() < deadline) {
     const frames = page.frames();
+    const frameCandidates: Array<{ frame: Frame; probe: PurchaseSurfaceProbe }> = [];
     for (const frame of frames) {
       await frame.waitForLoadState("domcontentloaded", { timeout: 1_500 }).catch(() => undefined);
-      const frameText = await frame.locator("body").innerText({ timeout: 1_000 }).catch(() => "");
-      const counts = {
-        gameCount: await countSelectors(frame, selectors.gameCountSelect),
-        autoSelect: await countSelectors(frame, selectors.autoSelectTab),
-        purchaseButton: await countSelectors(frame, selectors.purchaseButton)
-      };
-
-      if (isLikelyLotto645PurchaseFrame(frame.url(), frameText) || hasPurchaseSelectorHints(counts)) {
-        return frame;
-      }
+      const probe = await buildPurchaseSurfaceProbe(frame, "frame", selectors);
+      probe.matchedBySelectors = hasPurchaseSelectorHints(probe.counts);
+      frameCandidates.push({ frame, probe });
     }
 
-    const pageText = await bodyText(page);
-    const pageCounts = {
-      gameCount: await countSelectors(page, selectors.gameCountSelect),
-      autoSelect: await countSelectors(page, selectors.autoSelectTab),
-      purchaseButton: await countSelectors(page, selectors.purchaseButton)
-    };
-    const hasPageSelectors =
-      hasPurchaseSelectorHints(pageCounts) || isLikelyLotto645PurchaseFrame(page.url(), pageText);
-    if (hasPageSelectors) {
-      return page;
+    const pageProbe = await buildPurchaseSurfaceProbe(page, "page", selectors);
+    pageProbe.matchedBySelectors = hasPurchaseSelectorHints(pageProbe.counts);
+    lastCandidates = [...frameCandidates.map((candidate) => candidate.probe), pageProbe];
+
+    const matchedFrameCandidate = frameCandidates.find(({ probe }) => probe.matchedByUrl || probe.matchedByText);
+    if (matchedFrameCandidate) {
+      const selectedReason = matchedFrameCandidate.probe.matchedByUrl ? "url" : "text";
+      return {
+        surface: matchedFrameCandidate.frame,
+        resolution: {
+          selectedTarget: "frame",
+          selectedUrl: matchedFrameCandidate.probe.url,
+          selectedReason,
+          pageUrl: page.url(),
+          candidates: lastCandidates
+        }
+      };
+    }
+
+    const selectorMatchedFrameCandidate = frameCandidates.find(({ probe }) => probe.matchedBySelectors);
+    if (selectorMatchedFrameCandidate) {
+      return {
+        surface: selectorMatchedFrameCandidate.frame,
+        resolution: {
+          selectedTarget: "frame",
+          selectedUrl: selectorMatchedFrameCandidate.probe.url,
+          selectedReason: "selectors",
+          pageUrl: page.url(),
+          candidates: lastCandidates
+        }
+      };
+    }
+
+    if (pageProbe.matchedByUrl || pageProbe.matchedByText || pageProbe.matchedBySelectors) {
+      const selectedReason = pageProbe.matchedByUrl
+        ? "url"
+        : pageProbe.matchedByText
+          ? "text"
+          : "selectors";
+      return {
+        surface: page,
+        resolution: {
+          selectedTarget: "page",
+          selectedUrl: pageProbe.url,
+          selectedReason,
+          pageUrl: page.url(),
+          candidates: lastCandidates
+        }
+      };
     }
 
     await sleep(1_000);
   }
 
-  return page;
+  return {
+    surface: page,
+    resolution: {
+      selectedTarget: "page",
+      selectedUrl: page.url(),
+      selectedReason: "fallback",
+      pageUrl: page.url(),
+      candidates: lastCandidates
+    }
+  };
 };
 
 const goToPurchasePage = async (
   page: Page,
   baseUrl: string,
   selectors: SelectorGroups
-): Promise<PurchaseSurface> => {
+): Promise<PurchaseNavigationResult> => {
+  const attempts: PurchaseNavigationAttempt[] = [];
   const pageCountBeforeScriptOpen = page.context().pages().length;
   const canUseGameFunction = await page
     .evaluate(() => typeof (window as { gmUtil?: { goGameClsf?: unknown } }).gmUtil?.goGameClsf === "function")
@@ -429,50 +579,107 @@ const goToPurchasePage = async (
         )
       )
       .catch(() => undefined);
-    const popupPage = await waitForPopupPage(page, pageCountBeforeScriptOpen, 10_000);
-    if (popupPage) {
-      applyDialogAutoAccept(popupPage);
-      return resolvePurchaseSurface(popupPage, selectors);
+    const popupWait = await waitForPopupPage(page, pageCountBeforeScriptOpen, 10_000);
+    const attempt: PurchaseNavigationAttempt = {
+      strategy: "gmUtil-popup",
+      popupSnapshotCounts: popupWait.snapshotCounts,
+      popupPageUrls: popupWait.pageUrls
+    };
+    if (popupWait.popupPage) {
+      applyDialogAutoAccept(popupWait.popupPage);
+      const resolved = await resolvePurchaseSurface(popupWait.popupPage, selectors);
+      attempt.resolution = resolved.resolution;
+      attempts.push(attempt);
+      return {
+        surface: resolved.surface,
+        debug: {
+          chosenStrategy: attempt.strategy,
+          attempts
+        }
+      };
     }
+    attempts.push(attempt);
   }
 
   const entry = await findVisibleLocator(page, selectors.lotto645BuyEntry, 2_000);
+  const entryAttempt: PurchaseNavigationAttempt = {
+    strategy: "header-entry",
+    entryFound: Boolean(entry)
+  };
   if (entry) {
     const pageCountBeforeClick = page.context().pages().length;
     await entry.click({ timeout: 5_000 });
-    const popupPage = await waitForPopupPage(page, pageCountBeforeClick, 10_000);
-    if (popupPage) {
-      applyDialogAutoAccept(popupPage);
-      return resolvePurchaseSurface(popupPage, selectors);
+    const popupWait = await waitForPopupPage(page, pageCountBeforeClick, 10_000);
+    entryAttempt.popupSnapshotCounts = popupWait.snapshotCounts;
+    entryAttempt.popupPageUrls = popupWait.pageUrls;
+    if (popupWait.popupPage) {
+      applyDialogAutoAccept(popupWait.popupPage);
+      const resolved = await resolvePurchaseSurface(popupWait.popupPage, selectors);
+      entryAttempt.resolution = resolved.resolution;
+      attempts.push(entryAttempt);
+      return {
+        surface: resolved.surface,
+        debug: {
+          chosenStrategy: entryAttempt.strategy,
+          attempts
+        }
+      };
     }
 
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
     const clickedPageText = await bodyText(page);
     if (clickedPageText.includes("로또") || clickedPageText.includes("구매")) {
-      return page;
+      const resolved = await resolvePurchaseSurface(page, selectors);
+      entryAttempt.resolution = resolved.resolution;
+      attempts.push(entryAttempt);
+      return {
+        surface: resolved.surface,
+        debug: {
+          chosenStrategy: `${entryAttempt.strategy}-same-page`,
+          attempts
+        }
+      };
     }
   }
+  attempts.push(entryAttempt);
 
-  const purchaseUrlCandidates = [
-    `${baseUrl}/game.do?method=buyLotto`,
-    `${baseUrl}/game.do?method=buyLotto&drwNo=latest`
-  ];
+  const purchaseUrlCandidates = buildPurchasePageUrlCandidates(baseUrl);
 
   for (const url of purchaseUrlCandidates) {
+    const directAttempt: PurchaseNavigationAttempt = {
+      strategy: "direct-url",
+      destinationUrl: url
+    };
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => undefined);
     const text = await bodyText(page);
     if (text.includes("로또") || text.includes("구매")) {
-      return resolvePurchaseSurface(page, selectors);
+      const resolved = await resolvePurchaseSurface(page, selectors);
+      directAttempt.resolution = resolved.resolution;
+      attempts.push(directAttempt);
+      return {
+        surface: resolved.surface,
+        debug: {
+          chosenStrategy: directAttempt.strategy,
+          attempts
+        }
+      };
     }
+    attempts.push(directAttempt);
   }
 
-  throw new AppError(AppErrorCode.ERR05_NAVIGATION_FAILURE, "로또 6/45 구매 페이지로 이동하지 못했습니다.");
+  throw new AppError(AppErrorCode.ERR05_NAVIGATION_FAILURE, "로또 6/45 구매 페이지로 이동하지 못했습니다.", {
+    purchaseNavigation: {
+      chosenStrategy: "unresolved",
+      attempts
+    }
+  });
 };
 
 const selectGameCount = async (
   surface: PurchaseSurface,
   selectors: SelectorGroups,
-  gameCount: number
+  gameCount: number,
+  purchaseDebug: PurchaseNavigationResult["debug"]
 ): Promise<void> => {
   const select = await findAttachedLocator(surface, selectors.gameCountSelect, 2_500);
   if (select) {
@@ -489,7 +696,14 @@ const selectGameCount = async (
     return;
   }
 
-  throw new AppError(AppErrorCode.ERR06_PURCHASE_FAILURE, "게임 수량 입력 요소를 찾을 수 없습니다.");
+  throw new AppError(AppErrorCode.ERR06_PURCHASE_FAILURE, "게임 수량 입력 요소를 찾을 수 없습니다.", {
+    purchaseNavigation: purchaseDebug,
+    surfaceSnapshot: await buildPurchaseSurfaceProbe(
+      surface,
+      purchaseDebug.attempts.at(-1)?.resolution?.selectedTarget ?? "page",
+      selectors
+    )
+  });
 };
 
 const tryLoadPurchaseHistoryAndExtract = async (
@@ -511,7 +725,8 @@ const tryLoadPurchaseHistoryAndExtract = async (
       .catch(() => undefined);
   }
 
-  const historySurface = popupPage === surface ? popupPage : await resolvePurchaseSurface(popupPage, selectors);
+  const historySurface =
+    popupPage === surface ? popupPage : (await resolvePurchaseSurface(popupPage, selectors)).surface;
   return attemptExtractPurchase(historySurface, selectors.purchaseHistoryArea);
 };
 
@@ -653,14 +868,16 @@ export const runLotteryPurchaseOnce = async (
     ensureSufficientDeposit(availableDeposit, requiredDeposit);
     await notifyStep(3, TOTAL_STEPS, progressDescription(3, TOTAL_STEPS));
 
-    const purchaseSurface = await goToPurchasePage(page, baseUrl, selectors);
+    const purchaseNavigation = await goToPurchasePage(page, baseUrl, selectors);
+    const purchaseSurface = purchaseNavigation.surface;
+    logger.info("로또 구매 surface 선택", purchaseNavigation.debug);
 
     const autoSelect = await findVisibleLocator(purchaseSurface, selectors.autoSelectTab, 2_000);
     if (autoSelect) {
       await autoSelect.click({ timeout: 5_000 }).catch(() => undefined);
     }
 
-    await selectGameCount(purchaseSurface, selectors, config.purchase.gameCount);
+    await selectGameCount(purchaseSurface, selectors, config.purchase.gameCount, purchaseNavigation.debug);
     const selectionConfirmButton = await findVisibleLocator(
       purchaseSurface,
       selectors.selectionConfirmButton,

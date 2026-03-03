@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { AppErrorCode } from "../../src/core/errors";
 import {
+  buildPurchasePageUrlCandidates,
   buildInitialNavigationUrl,
   buildLoginUrlCandidates,
   buildPostLoginHomeUrl,
@@ -64,6 +65,13 @@ describe("lottery/client logic", () => {
     );
   });
 
+  test("includes verified popup urls as purchase page fallbacks", () => {
+    expect(buildPurchasePageUrlCandidates("https://www.dhlottery.co.kr").slice(0, 2)).toEqual([
+      "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40",
+      "https://ol.dhlottery.co.kr/olotto/game/game645.do"
+    ]);
+  });
+
   test("prefers the first visible match over earlier hidden matches", () => {
     expect(pickFirstVisibleIndex([false, true, true])).toBe(1);
     expect(pickFirstVisibleIndex([false, false])).toBe(-1);
@@ -113,6 +121,9 @@ describe("lottery/client logic", () => {
 
   test("treats purchase surface as ready when key selectors are present", () => {
     expect(hasPurchaseSelectorHints({ gameCount: 1, autoSelect: 0, purchaseButton: 0 })).toBe(true);
+    expect(hasPurchaseSelectorHints({ gameCount: 0, gameCountInput: 1, autoSelect: 0, purchaseButton: 0 })).toBe(
+      true
+    );
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 1, purchaseButton: 0 })).toBe(true);
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 1 })).toBe(true);
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 0 })).toBe(false);
