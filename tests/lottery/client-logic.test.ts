@@ -13,6 +13,7 @@ import {
   isAlertInterceptionError,
   isLoginPageUrl,
   shouldCaptureFailureArtifacts,
+  shouldRetryAfterLostPurchaseSurface,
   shouldRetryPostLoginHomeNavigation,
   shouldUseAttachedDomClickFallback,
   shouldTreatMypageRedirectAsLoginFailure,
@@ -224,6 +225,57 @@ describe("lottery/client logic", () => {
     expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR06_PURCHASE_FAILURE)).toBe(true);
     expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR07_PURCHASE_HISTORY_NOT_FOUND)).toBe(true);
     expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR08_UNEXPECTED)).toBe(false);
+  });
+
+  test("retries purchase preparation when the popup disappears and the surface goes blank", () => {
+    expect(
+      shouldRetryAfterLostPurchaseSurface(1, {
+        counts: {
+          purchaseButton: 0,
+          selectionConfirmButton: 0,
+          alertConfirmButton: 0,
+          purchaseConfirmButton: 0,
+          resultArea: 0
+        },
+        bodyPreview: ""
+      })
+    ).toBe(true);
+    expect(
+      shouldRetryAfterLostPurchaseSurface(2, {
+        counts: {
+          purchaseButton: 0,
+          selectionConfirmButton: 0,
+          alertConfirmButton: 0,
+          purchaseConfirmButton: 0,
+          resultArea: 0
+        },
+        bodyPreview: ""
+      })
+    ).toBe(false);
+    expect(
+      shouldRetryAfterLostPurchaseSurface(1, {
+        counts: {
+          purchaseButton: 1,
+          selectionConfirmButton: 0,
+          alertConfirmButton: 0,
+          purchaseConfirmButton: 0,
+          resultArea: 0
+        },
+        bodyPreview: ""
+      })
+    ).toBe(false);
+    expect(
+      shouldRetryAfterLostPurchaseSurface(1, {
+        counts: {
+          purchaseButton: 0,
+          selectionConfirmButton: 0,
+          alertConfirmButton: 0,
+          purchaseConfirmButton: 0,
+          resultArea: 0
+        },
+        bodyPreview: "로또구매방법선택"
+      })
+    ).toBe(false);
   });
 
   test("allows attached dom click fallback only when explicitly requested", () => {

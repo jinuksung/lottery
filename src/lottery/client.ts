@@ -572,6 +572,24 @@ export const shouldCaptureFailureArtifacts = (code: AppErrorCode): boolean =>
     AppErrorCode.ERR07_PURCHASE_HISTORY_NOT_FOUND
   ].includes(code);
 
+export const shouldRetryAfterLostPurchaseSurface = (
+  openPageCount: number,
+  purchaseStageSnapshot:
+    | {
+        counts?: Record<string, number>;
+        bodyPreview?: string;
+      }
+    | undefined
+): boolean => {
+  if (!purchaseStageSnapshot || openPageCount > 1) {
+    return false;
+  }
+
+  const counts = purchaseStageSnapshot.counts ?? {};
+  const allCountsZero = Object.values(counts).every((count) => count === 0);
+  return allCountsZero && !purchaseStageSnapshot.bodyPreview;
+};
+
 export const shouldUseAttachedDomClickFallback = (
   hasVisibleLocator: boolean,
   hasAttachedLocator: boolean,
@@ -719,6 +737,45 @@ const captureFailureArtifacts = async (
     artifactDir,
     pageCount: pages.length
   });
+};
+
+const preparePurchaseSurfaceForBuying = async (
+  page: Page,
+  baseUrl: string,
+  selectors: SelectorGroups,
+  gameCount: number,
+  logger: Logger
+): Promise<{
+  purchaseSurface: PurchaseSurface;
+  popupPage: Page;
+  purchaseDebug: PurchaseNavigationResult["debug"];
+}> => {
+  const purchaseNavigation = await goToPurchasePage(page, baseUrl, selectors);
+  let purchaseSurface = purchaseNavigation.surface;
+  logger.info("로또 구매 surface 선택", purchaseNavigation.debug);
+
+  const autoSelect = await findVisibleLocator(purchaseSurface, selectors.autoSelectTab, 2_000);
+  if (autoSelect) {
+    await autoSelect.click({ timeout: 5_000 }).catch(() => undefined);
+  }
+
+  await selectGameCount(purchaseSurface, selectors, gameCount, purchaseNavigation.debug);
+  const selectionConfirmButton = await findVisibleLocator(
+    purchaseSurface,
+    selectors.selectionConfirmButton,
+    2_500
+  );
+  if (selectionConfirmButton) {
+    await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
+    await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
+  }
+
+  purchaseSurface = await waitForPurchaseButtonSurface(purchaseSurface, purchaseNavigation.page, selectors);
+  return {
+    purchaseSurface,
+    popupPage: purchaseNavigation.page,
+    purchaseDebug: purchaseNavigation.debug
+  };
 };
 
 const attemptExtractPurchase = async (
@@ -1188,40 +1245,57 @@ export const runLotteryPurchaseOnce = async (
     ensureSufficientDeposit(availableDeposit, requiredDeposit);
     await notifyStep(3, TOTAL_STEPS, progressDescription(3, TOTAL_STEPS));
 
-    const purchaseNavigation = await goToPurchasePage(page, baseUrl, selectors);
-    let purchaseSurface = purchaseNavigation.surface;
-    logger.info("로또 구매 surface 선택", purchaseNavigation.debug);
-
-    const autoSelect = await findVisibleLocator(purchaseSurface, selectors.autoSelectTab, 2_000);
-    if (autoSelect) {
-      await autoSelect.click({ timeout: 5_000 }).catch(() => undefined);
-    }
-
-    await selectGameCount(purchaseSurface, selectors, config.purchase.gameCount, purchaseNavigation.debug);
-    const selectionConfirmButton = await findVisibleLocator(
-      purchaseSurface,
-      selectors.selectionConfirmButton,
-      2_500
-    );
-    if (selectionConfirmButton) {
-      await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
-      await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
-    }
-
-    purchaseSurface = await waitForPurchaseButtonSurface(
-      purchaseSurface,
-      purchaseNavigation.page,
-      selectors
-    );
-
-    await clickByCandidates(
-      purchaseSurface,
+    let purchasePreparation = await preparePurchaseSurfaceForBuying(
+      page,
+      baseUrl,
       selectors,
-      selectors.purchaseButton,
-      AppErrorCode.ERR06_PURCHASE_FAILURE,
-      "구매하기 버튼을 찾지 못했습니다.",
-      { preferAttachedDomClick: true }
+      config.purchase.gameCount,
+      logger
     );
+    let purchaseSurface = purchasePreparation.purchaseSurface;
+
+    try {
+      await clickByCandidates(
+        purchaseSurface,
+        selectors,
+        selectors.purchaseButton,
+        AppErrorCode.ERR06_PURCHASE_FAILURE,
+        "구매하기 버튼을 찾지 못했습니다.",
+        { preferAttachedDomClick: true }
+      );
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.code === AppErrorCode.ERR06_PURCHASE_FAILURE &&
+        shouldRetryAfterLostPurchaseSurface(
+          page.context().pages().length,
+          error.details?.purchaseStageSnapshot as { counts?: Record<string, number>; bodyPreview?: string } | undefined
+        )
+      ) {
+        logger.warn("구매 팝업이 유실되어 구매 준비를 다시 시도합니다.", {
+          openPages: page.context().pages().length,
+          purchaseStageSnapshot: error.details?.purchaseStageSnapshot
+        });
+        purchasePreparation = await preparePurchaseSurfaceForBuying(
+          page,
+          baseUrl,
+          selectors,
+          config.purchase.gameCount,
+          logger
+        );
+        purchaseSurface = purchasePreparation.purchaseSurface;
+        await clickByCandidates(
+          purchaseSurface,
+          selectors,
+          selectors.purchaseButton,
+          AppErrorCode.ERR06_PURCHASE_FAILURE,
+          "구매하기 버튼을 찾지 못했습니다.",
+          { preferAttachedDomClick: true }
+        );
+      } else {
+        throw error;
+      }
+    }
 
     const finalPurchaseConfirmButton = await findVisibleLocator(
       purchaseSurface,
@@ -1236,7 +1310,12 @@ export const runLotteryPurchaseOnce = async (
     let purchase = await attemptExtractPurchase(purchaseSurface, selectors.purchaseResultArea);
     if (!purchase) {
       logger.warn("구매 완료 화면에서 번호 추출 실패, 구매내역 페이지 재조회 시도");
-      purchase = await tryLoadPurchaseHistoryAndExtract(purchaseSurface, page.context().pages().at(-1) ?? page, baseUrl, selectors);
+      purchase = await tryLoadPurchaseHistoryAndExtract(
+        purchaseSurface,
+        page.context().pages().at(-1) ?? page,
+        baseUrl,
+        selectors
+      );
     }
 
     if (!purchase) {
