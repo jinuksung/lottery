@@ -22,6 +22,7 @@ describe("lottery/selectors", () => {
     expect(DEFAULT_SELECTORS.autoSelectTab[0]).toBe("a#num2");
     expect(DEFAULT_SELECTORS.gameCountSelect[0]).toBe("select#amoundApply");
     expect(DEFAULT_SELECTORS.selectionConfirmButton[0]).toBe("input#btnSelectNum");
+    expect(DEFAULT_SELECTORS.alertConfirmButton[0]).toBe("#popupLayerAlert input[value='확인']");
     expect(DEFAULT_SELECTORS.purchaseConfirmButton[0]).toBe("#popupLayerConfirm input[value='확인']");
     expect(DEFAULT_SELECTORS.purchaseButton[0]).toBe("button#btnBuy");
   });

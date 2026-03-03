@@ -310,8 +310,23 @@ const findAttachedLocator = async (
   return null;
 };
 
+const dismissBlockingAlertIfPresent = async (
+  surface: PurchaseSurface,
+  selectors: SelectorGroups
+): Promise<boolean> => {
+  const alertConfirmButton = await findVisibleLocator(surface, selectors.alertConfirmButton, 1_500);
+  if (!alertConfirmButton) {
+    return false;
+  }
+
+  await alertConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
+  await sleep(300);
+  return true;
+};
+
 const clickByCandidates = async (
   surface: PurchaseSurface,
+  selectorGroups: SelectorGroups,
   selectors: string[],
   errorCode: AppErrorCode,
   errorMessage: string
@@ -324,9 +339,22 @@ const clickByCandidates = async (
   try {
     await locator.click({ timeout: 5_000 });
   } catch (error) {
+    const originalError = error instanceof Error ? error.message : String(error);
+    if (isAlertInterceptionError(originalError) && (await dismissBlockingAlertIfPresent(surface, selectorGroups))) {
+      try {
+        await locator.click({ timeout: 5_000 });
+        return;
+      } catch (retryError) {
+        throw new AppError(errorCode, errorMessage, {
+          selectors,
+          originalError: retryError instanceof Error ? retryError.message : String(retryError)
+        });
+      }
+    }
+
     throw new AppError(errorCode, errorMessage, {
       selectors,
-      originalError: error instanceof Error ? error.message : String(error)
+      originalError
     });
   }
 };
@@ -421,6 +449,9 @@ export const buildPurchasePageUrlCandidates = (baseUrl: string): string[] => [
 export const isConfirmedPurchaseSurfaceReason = (
   reason: "url" | "text" | "selectors" | "fallback"
 ): boolean => reason !== "fallback";
+
+export const isAlertInterceptionError = (message: string): boolean =>
+  message.includes("popupLayerAlert") && message.includes("intercepts pointer events");
 
 const isCredentialError = (pageText: string): boolean => {
   const normalized = pageText.replaceAll(" ", "");
@@ -790,6 +821,7 @@ const login = async (
     await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
     await clickByCandidates(
       page,
+      selectors,
       selectors.loginButton,
       AppErrorCode.ERR05_NAVIGATION_FAILURE,
       "로그인 버튼을 찾지 못했습니다."
@@ -823,6 +855,7 @@ const login = async (
 
   await clickByCandidates(
     page,
+    selectors,
     selectors.loginSubmitButton,
     AppErrorCode.ERR04_LOGIN_TIMEOUT,
     "로그인 제출 버튼을 찾지 못했습니다."
@@ -910,10 +943,12 @@ export const runLotteryPurchaseOnce = async (
     );
     if (selectionConfirmButton) {
       await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
+      await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
     }
 
     await clickByCandidates(
       purchaseSurface,
+      selectors,
       selectors.purchaseButton,
       AppErrorCode.ERR06_PURCHASE_FAILURE,
       "구매하기 버튼을 찾지 못했습니다."

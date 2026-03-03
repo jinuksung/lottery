@@ -11,6 +11,7 @@ export interface SelectorGroups {
   gameCountSelect: string[];
   gameCountInput: string[];
   selectionConfirmButton: string[];
+  alertConfirmButton: string[];
   purchaseButton: string[];
   purchaseConfirmButton: string[];
   purchaseResultArea: string[];
@@ -108,6 +109,12 @@ export const DEFAULT_SELECTORS: SelectorGroups = {
     "input#btnSelectNum",
     "input[name='btnSelectNum']",
     "input[value='확인']"
+  ],
+  alertConfirmButton: [
+    "#popupLayerAlert input[value='확인']",
+    "#popupLayerAlert .button.confirm",
+    "#popupLayerAlert button:has-text('확인')",
+    "#popupLayerAlert a:has-text('확인')"
   ],
   purchaseButton: [
     "button#btnBuy",

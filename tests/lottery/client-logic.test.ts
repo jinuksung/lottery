@@ -10,6 +10,7 @@ import {
   ensureSufficientDeposit,
   hasPurchaseSelectorHints,
   isConfirmedPurchaseSurfaceReason,
+  isAlertInterceptionError,
   isKnownDhlotteryErrorPage,
   isLikelyLotto645PurchaseFrame,
   pickPopupPageIndexFromSnapshots,
@@ -144,5 +145,14 @@ describe("lottery/client logic", () => {
     expect(isConfirmedPurchaseSurfaceReason("url")).toBe(true);
     expect(isConfirmedPurchaseSurfaceReason("text")).toBe(true);
     expect(isConfirmedPurchaseSurfaceReason("selectors")).toBe(true);
+  });
+
+  test("detects popup alert interception during purchase button click", () => {
+    expect(
+      isAlertInterceptionError(
+        "locator.click: <div class=\"layer-alert\" id=\"popupLayerAlert\">…</div> intercepts pointer events"
+      )
+    ).toBe(true);
+    expect(isAlertInterceptionError("locator.click: element is not attached")).toBe(false);
   });
 });
