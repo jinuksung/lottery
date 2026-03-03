@@ -17,6 +17,26 @@ interface LoggerOptions {
   now?: () => Date;
 }
 
+const ANSI = {
+  reset: "\u001b[0m",
+  dim: "\u001b[2m",
+  blue: "\u001b[34m",
+  yellow: "\u001b[33m",
+  red: "\u001b[31m",
+  gray: "\u001b[90m"
+} as const;
+
+const colorizeLevel = (level: LogLevel): string => {
+  switch (level) {
+    case "INFO":
+      return `${ANSI.blue}[${level}]${ANSI.reset}`;
+    case "WARN":
+      return `${ANSI.yellow}[${level}]${ANSI.reset}`;
+    case "ERROR":
+      return `${ANSI.red}[${level}]${ANSI.reset}`;
+  }
+};
+
 const stringifyMeta = (meta?: Record<string, unknown>): string => {
   if (!meta || Object.keys(meta).length === 0) {
     return "";
@@ -33,15 +53,21 @@ export const createLogger = (options: LoggerOptions): Logger => {
   mkdirSync(dirname(options.logFilePath), { recursive: true });
 
   const write = (level: LogLevel, message: string, meta?: Record<string, unknown>): void => {
-    const line = `${now().toISOString()} [${level}] ${message}${stringifyMeta(meta)}\n`;
+    const timestamp = now().toISOString();
+    const metaText = stringifyMeta(meta);
+    const line = `${timestamp} [${level}] ${message}${metaText}\n`;
+    const consoleLine =
+      `${ANSI.dim}${timestamp}${ANSI.reset} ${colorizeLevel(level)} ${message}` +
+      `${metaText ? ` ${ANSI.gray}${metaText.trimStart()}${ANSI.reset}` : ""}\n`;
+
     appendFileSync(options.logFilePath, line, "utf8");
 
     if (level === "ERROR") {
-      stderr.write(line);
+      stderr.write(consoleLine);
       return;
     }
 
-    stdout.write(line);
+    stdout.write(consoleLine);
   };
 
   return {

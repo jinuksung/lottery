@@ -15,7 +15,7 @@ class MemoryWritable extends Writable {
 }
 
 describe("core/logger", () => {
-  test("writes formatted log lines to file and stdout", async () => {
+  test("writes plain log lines to file and colorized lines to stdout/stderr", async () => {
     const dir = await mkdtemp(join(tmpdir(), "lottery-logger-"));
     const logPath = join(dir, "run-once.log");
     const out = new MemoryWritable();
@@ -34,8 +34,11 @@ describe("core/logger", () => {
     expect(saved).toContain("ERROR");
     expect(saved).toContain("site opened");
     expect(saved).toContain("login failed");
+    expect(saved).not.toContain("\u001b[");
 
     expect(out.chunks.join("")).toContain("site opened");
     expect(err.chunks.join("")).toContain("login failed");
+    expect(out.chunks.join("")).toContain("\u001b[");
+    expect(err.chunks.join("")).toContain("\u001b[");
   });
 });
