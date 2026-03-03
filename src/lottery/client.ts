@@ -61,6 +61,10 @@ interface PurchaseNavigationResult {
   };
 }
 
+interface ClickCandidatesOptions {
+  preferAttachedDomClick?: boolean;
+}
+
 export interface RunOnceResult {
   purchasedAt: string;
   drawNo: number;
@@ -329,13 +333,47 @@ const clickByCandidates = async (
   selectorGroups: SelectorGroups,
   selectors: string[],
   errorCode: AppErrorCode,
-  errorMessage: string
+  errorMessage: string,
+  options: ClickCandidatesOptions = {}
 ): Promise<void> => {
-  const locator = await findVisibleLocator(surface, selectors);
-  if (!locator) {
-    throw new AppError(errorCode, errorMessage, { selectors });
+  const visibleLocator = await findVisibleLocator(surface, selectors);
+  const attachedLocator = visibleLocator ? visibleLocator : await findAttachedLocator(surface, selectors);
+  const useAttachedDomClick = shouldUseAttachedDomClickFallback(
+    Boolean(visibleLocator),
+    Boolean(attachedLocator),
+    options.preferAttachedDomClick ?? false
+  );
+
+  if (!visibleLocator && !useAttachedDomClick) {
+    throw new AppError(errorCode, errorMessage, {
+      selectors,
+      attachedLocatorFound: Boolean(attachedLocator)
+    });
   }
 
+  if (useAttachedDomClick && attachedLocator) {
+    try {
+      await attachedLocator.evaluate((element) => {
+        (element as HTMLElement).click();
+      });
+      return;
+    } catch (error) {
+      throw new AppError(errorCode, errorMessage, {
+        selectors,
+        attachedLocatorFound: true,
+        originalError: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  if (!visibleLocator) {
+    throw new AppError(errorCode, errorMessage, {
+      selectors,
+      attachedLocatorFound: Boolean(attachedLocator)
+    });
+  }
+
+  const locator = visibleLocator;
   try {
     await locator.click({ timeout: 5_000 });
   } catch (error) {
@@ -462,6 +500,12 @@ export const shouldTreatMypageRedirectAsLoginFailure = (
   mypageHomeUrl: string,
   currentUrl: string
 ): boolean => currentUrl !== mypageHomeUrl && isLoginPageUrl(currentUrl);
+
+export const shouldUseAttachedDomClickFallback = (
+  hasVisibleLocator: boolean,
+  hasAttachedLocator: boolean,
+  preferAttachedDomClick: boolean
+): boolean => !hasVisibleLocator && hasAttachedLocator && preferAttachedDomClick;
 
 const isCredentialError = (pageText: string): boolean => {
   const normalized = pageText.replaceAll(" ", "");
@@ -997,7 +1041,8 @@ export const runLotteryPurchaseOnce = async (
       selectors,
       selectors.purchaseButton,
       AppErrorCode.ERR06_PURCHASE_FAILURE,
-      "구매하기 버튼을 찾지 못했습니다."
+      "구매하기 버튼을 찾지 못했습니다.",
+      { preferAttachedDomClick: true }
     );
 
     const finalPurchaseConfirmButton = await findVisibleLocator(

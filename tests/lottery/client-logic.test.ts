@@ -12,6 +12,7 @@ import {
   isConfirmedPurchaseSurfaceReason,
   isAlertInterceptionError,
   isLoginPageUrl,
+  shouldUseAttachedDomClickFallback,
   shouldTreatMypageRedirectAsLoginFailure,
   isKnownDhlotteryErrorPage,
   isLikelyLotto645PurchaseFrame,
@@ -177,5 +178,12 @@ describe("lottery/client logic", () => {
         "https://www.dhlottery.co.kr/mypage/home"
       )
     ).toBe(false);
+  });
+
+  test("allows attached dom click fallback only when explicitly requested", () => {
+    expect(shouldUseAttachedDomClickFallback(false, true, true)).toBe(true);
+    expect(shouldUseAttachedDomClickFallback(false, false, true)).toBe(false);
+    expect(shouldUseAttachedDomClickFallback(true, true, true)).toBe(false);
+    expect(shouldUseAttachedDomClickFallback(false, true, false)).toBe(false);
   });
 });
