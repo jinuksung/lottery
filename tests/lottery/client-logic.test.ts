@@ -9,6 +9,7 @@ import {
   hasPurchaseSelectorHints,
   isKnownDhlotteryErrorPage,
   isLikelyLotto645PurchaseFrame,
+  pickPopupPageIndexFromSnapshots,
   pickLotto645PurchaseFrameIndex,
   pickFirstVisibleIndex,
   resolvePopupPageIndex,
@@ -73,6 +74,12 @@ describe("lottery/client logic", () => {
     expect(resolvePopupPageIndex(1, 2)).toBe(1);
     expect(resolvePopupPageIndex(2, 4)).toBe(3);
     expect(resolvePopupPageIndex(2, 2)).toBe(-1);
+  });
+
+  test("detects a popup that appears after delayed page-count snapshots", () => {
+    expect(pickPopupPageIndexFromSnapshots(1, [1, 1, 2])).toBe(1);
+    expect(pickPopupPageIndexFromSnapshots(2, [2, 2, 4])).toBe(3);
+    expect(pickPopupPageIndexFromSnapshots(2, [2, 2, 2])).toBe(-1);
   });
 
   test("prefers the lotto645 inner frame when popup hosts the real purchase ui in an iframe", () => {

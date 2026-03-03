@@ -79,6 +79,20 @@ export const pickFirstVisibleIndex = (visibilityStates: boolean[]): number =>
 export const resolvePopupPageIndex = (pageCountBeforeClick: number, pageCountAfterClick: number): number =>
   pageCountAfterClick > pageCountBeforeClick ? pageCountAfterClick - 1 : -1;
 
+export const pickPopupPageIndexFromSnapshots = (
+  pageCountBeforeClick: number,
+  snapshotCounts: number[]
+): number => {
+  for (const pageCountAfterClick of snapshotCounts) {
+    const popupPageIndex = resolvePopupPageIndex(pageCountBeforeClick, pageCountAfterClick);
+    if (popupPageIndex >= 0) {
+      return popupPageIndex;
+    }
+  }
+
+  return -1;
+};
+
 export const pickLotto645PurchaseFrameIndex = (frameUrls: string[]): number =>
   frameUrls.findIndex((url) => url.includes("/game645.do"));
 
@@ -109,6 +123,24 @@ const countSelectors = async (surface: PurchaseSurface, selectors: string[]): Pr
   }
 
   return 0;
+};
+
+const waitForPopupPage = async (page: Page, pageCountBeforeClick: number, timeoutMs: number): Promise<Page | null> => {
+  const deadline = Date.now() + timeoutMs;
+  const snapshotCounts: number[] = [];
+
+  while (Date.now() < deadline) {
+    const pages = page.context().pages();
+    snapshotCounts.push(pages.length);
+    const popupPageIndex = pickPopupPageIndexFromSnapshots(pageCountBeforeClick, snapshotCounts);
+    if (popupPageIndex >= 0) {
+      return pages[popupPageIndex] ?? null;
+    }
+
+    await sleep(500);
+  }
+
+  return null;
 };
 
 const findFirstVisibleMatch = async (surface: PurchaseSurface, selector: string): Promise<Locator | null> => {
@@ -397,12 +429,8 @@ const goToPurchasePage = async (
         )
       )
       .catch(() => undefined);
-    await sleep(2_000);
-
-    const pagesAfterScriptOpen = page.context().pages();
-    const popupPageIndex = resolvePopupPageIndex(pageCountBeforeScriptOpen, pagesAfterScriptOpen.length);
-    if (popupPageIndex >= 0) {
-      const popupPage = pagesAfterScriptOpen[popupPageIndex];
+    const popupPage = await waitForPopupPage(page, pageCountBeforeScriptOpen, 10_000);
+    if (popupPage) {
       applyDialogAutoAccept(popupPage);
       return resolvePurchaseSurface(popupPage, selectors);
     }
@@ -412,12 +440,8 @@ const goToPurchasePage = async (
   if (entry) {
     const pageCountBeforeClick = page.context().pages().length;
     await entry.click({ timeout: 5_000 });
-    await sleep(1_500);
-
-    const pagesAfterClick = page.context().pages();
-    const popupPageIndex = resolvePopupPageIndex(pageCountBeforeClick, pagesAfterClick.length);
-    if (popupPageIndex >= 0) {
-      const popupPage = pagesAfterClick[popupPageIndex];
+    const popupPage = await waitForPopupPage(page, pageCountBeforeClick, 10_000);
+    if (popupPage) {
       applyDialogAutoAccept(popupPage);
       return resolvePurchaseSurface(popupPage, selectors);
     }
