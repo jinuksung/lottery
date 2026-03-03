@@ -94,6 +94,23 @@ export const isLikelyLotto645PurchaseFrame = (frameUrl: string, frameText: strin
   return matchedHintCount >= 2;
 };
 
+export const hasPurchaseSelectorHints = (counts: {
+  gameCount: number;
+  autoSelect: number;
+  purchaseButton: number;
+}): boolean => counts.gameCount > 0 || counts.autoSelect > 0 || counts.purchaseButton > 0;
+
+const countSelectors = async (surface: PurchaseSurface, selectors: string[]): Promise<number> => {
+  for (const selector of selectors) {
+    const count = await surface.locator(selector).count().catch(() => 0);
+    if (count > 0) {
+      return count;
+    }
+  }
+
+  return 0;
+};
+
 const findFirstVisibleMatch = async (surface: PurchaseSurface, selector: string): Promise<Locator | null> => {
   const matches = surface.locator(selector);
   const count = await matches.count().catch(() => 0);
@@ -323,7 +340,7 @@ const attemptExtractPurchase = async (
   }
 };
 
-const resolvePurchaseSurface = async (page: Page): Promise<PurchaseSurface> => {
+const resolvePurchaseSurface = async (page: Page, selectors: SelectorGroups): Promise<PurchaseSurface> => {
   await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
   const deadline = Date.now() + 15_000;
 
@@ -332,15 +349,25 @@ const resolvePurchaseSurface = async (page: Page): Promise<PurchaseSurface> => {
     for (const frame of frames) {
       await frame.waitForLoadState("domcontentloaded", { timeout: 1_500 }).catch(() => undefined);
       const frameText = await frame.locator("body").innerText({ timeout: 1_000 }).catch(() => "");
-      if (isLikelyLotto645PurchaseFrame(frame.url(), frameText)) {
+      const counts = {
+        gameCount: await countSelectors(frame, selectors.gameCountSelect),
+        autoSelect: await countSelectors(frame, selectors.autoSelectTab),
+        purchaseButton: await countSelectors(frame, selectors.purchaseButton)
+      };
+
+      if (isLikelyLotto645PurchaseFrame(frame.url(), frameText) || hasPurchaseSelectorHints(counts)) {
         return frame;
       }
     }
 
     const pageText = await bodyText(page);
+    const pageCounts = {
+      gameCount: await countSelectors(page, selectors.gameCountSelect),
+      autoSelect: await countSelectors(page, selectors.autoSelectTab),
+      purchaseButton: await countSelectors(page, selectors.purchaseButton)
+    };
     const hasPageSelectors =
-      (await page.locator("select#amoundApply").count().catch(() => 0)) > 0 ||
-      isLikelyLotto645PurchaseFrame(page.url(), pageText);
+      hasPurchaseSelectorHints(pageCounts) || isLikelyLotto645PurchaseFrame(page.url(), pageText);
     if (hasPageSelectors) {
       return page;
     }
@@ -377,7 +404,7 @@ const goToPurchasePage = async (
     if (popupPageIndex >= 0) {
       const popupPage = pagesAfterScriptOpen[popupPageIndex];
       applyDialogAutoAccept(popupPage);
-      return resolvePurchaseSurface(popupPage);
+      return resolvePurchaseSurface(popupPage, selectors);
     }
   }
 
@@ -392,7 +419,7 @@ const goToPurchasePage = async (
     if (popupPageIndex >= 0) {
       const popupPage = pagesAfterClick[popupPageIndex];
       applyDialogAutoAccept(popupPage);
-      return resolvePurchaseSurface(popupPage);
+      return resolvePurchaseSurface(popupPage, selectors);
     }
 
     await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
@@ -411,7 +438,7 @@ const goToPurchasePage = async (
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => undefined);
     const text = await bodyText(page);
     if (text.includes("로또") || text.includes("구매")) {
-      return resolvePurchaseSurface(page);
+      return resolvePurchaseSurface(page, selectors);
     }
   }
 
@@ -460,7 +487,7 @@ const tryLoadPurchaseHistoryAndExtract = async (
       .catch(() => undefined);
   }
 
-  const historySurface = popupPage === surface ? popupPage : await resolvePurchaseSurface(popupPage);
+  const historySurface = popupPage === surface ? popupPage : await resolvePurchaseSurface(popupPage, selectors);
   return attemptExtractPurchase(historySurface, selectors.purchaseHistoryArea);
 };
 
