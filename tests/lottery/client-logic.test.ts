@@ -12,6 +12,7 @@ import {
   isConfirmedPurchaseSurfaceReason,
   isAlertInterceptionError,
   isLoginPageUrl,
+  shouldCaptureFailureArtifacts,
   shouldRetryPostLoginHomeNavigation,
   shouldUseAttachedDomClickFallback,
   shouldTreatMypageRedirectAsLoginFailure,
@@ -215,6 +216,14 @@ describe("lottery/client logic", () => {
         3
       )
     ).toBe(false);
+  });
+
+  test("captures browser diagnostics only for navigation and purchase failures", () => {
+    expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR04_LOGIN_TIMEOUT)).toBe(false);
+    expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR05_NAVIGATION_FAILURE)).toBe(true);
+    expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR06_PURCHASE_FAILURE)).toBe(true);
+    expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR07_PURCHASE_HISTORY_NOT_FOUND)).toBe(true);
+    expect(shouldCaptureFailureArtifacts(AppErrorCode.ERR08_UNEXPECTED)).toBe(false);
   });
 
   test("allows attached dom click fallback only when explicitly requested", () => {

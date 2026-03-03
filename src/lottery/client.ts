@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { chromium, type BrowserContextOptions, type Frame, type Locator, type Page } from "playwright";
 import type { AppConfig } from "../core/config";
 import { AppError, AppErrorCode } from "../core/errors";
@@ -76,6 +78,7 @@ export interface RunOnceResult {
 }
 
 export interface LotteryClientDependencies {
+  cwd?: string;
   config: AppConfig;
   logger: Logger;
   notifyStep: (step: number, total: number, description: string) => Promise<void>;
@@ -562,6 +565,13 @@ export const shouldRetryPostLoginHomeNavigation = (
   maxAttempts: number
 ): boolean => attempt < maxAttempts && shouldTreatMypageRedirectAsLoginFailure(mypageHomeUrl, currentUrl);
 
+export const shouldCaptureFailureArtifacts = (code: AppErrorCode): boolean =>
+  [
+    AppErrorCode.ERR05_NAVIGATION_FAILURE,
+    AppErrorCode.ERR06_PURCHASE_FAILURE,
+    AppErrorCode.ERR07_PURCHASE_HISTORY_NOT_FOUND
+  ].includes(code);
+
 export const shouldUseAttachedDomClickFallback = (
   hasVisibleLocator: boolean,
   hasAttachedLocator: boolean,
@@ -643,6 +653,71 @@ const navigateToVerifiedMypageHome = async (
   throw new AppError(AppErrorCode.ERR04_LOGIN_TIMEOUT, "로그인 상태 확인에 실패했습니다.", {
     currentUrl: page.url(),
     mypageHomeUrl
+  });
+};
+
+const sanitizePathPart = (value: string): string => value.replaceAll(/[^a-zA-Z0-9_-]/g, "-");
+
+const captureFailureArtifacts = async (
+  cwd: string,
+  fallbackPage: Page,
+  error: AppError,
+  logger: Logger
+): Promise<void> => {
+  const artifactDir = resolve(
+    cwd,
+    "logs",
+    "diagnostics",
+    `${sanitizePathPart(new Date().toISOString())}-${error.code.toLowerCase()}`
+  );
+  mkdirSync(artifactDir, { recursive: true });
+
+  const pages = fallbackPage.context().pages();
+  const manifest: Record<string, unknown> = {
+    errorCode: error.code,
+    errorMessage: error.message,
+    details: error.details,
+    artifactDir,
+    pageCount: pages.length,
+    pages: [] as Array<Record<string, unknown>>
+  };
+
+  for (const [pageIndex, candidatePage] of pages.entries()) {
+    const pageBase = join(artifactDir, `page-${pageIndex}`);
+    const frameSnapshots: Array<Record<string, unknown>> = [];
+
+    await candidatePage.waitForLoadState("domcontentloaded", { timeout: 2_000 }).catch(() => undefined);
+
+    const pageHtml = await candidatePage.content().catch(() => "");
+    writeFileSync(`${pageBase}.html`, pageHtml, "utf8");
+    await candidatePage.screenshot({ path: `${pageBase}.png`, fullPage: true }).catch(() => undefined);
+
+    for (const [frameIndex, frame] of candidatePage.frames().entries()) {
+      const frameHtml = await frame.content().catch(() => "");
+      const frameText = await bodyText(frame).catch(() => "");
+      const frameBase = `${pageBase}-frame-${frameIndex}`;
+      writeFileSync(`${frameBase}.html`, frameHtml, "utf8");
+      frameSnapshots.push({
+        frameIndex,
+        url: frame.url(),
+        bodyPreview: truncateLogText(frameText.replaceAll(/\s+/g, " ").trim(), 400)
+      });
+    }
+
+    (manifest.pages as Array<Record<string, unknown>>).push({
+      pageIndex,
+      url: candidatePage.url(),
+      title: await candidatePage.title().catch(() => ""),
+      frameCount: candidatePage.frames().length,
+      frames: frameSnapshots
+    });
+  }
+
+  writeFileSync(join(artifactDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+  logger.warn("브라우저 실패 진단을 저장했습니다.", {
+    errorCode: error.code,
+    artifactDir,
+    pageCount: pages.length
   });
 };
 
@@ -1075,7 +1150,7 @@ const login = async (
 export const runLotteryPurchaseOnce = async (
   deps: LotteryClientDependencies
 ): Promise<RunOnceResult> => {
-  const { config, logger, notifyStep } = deps;
+  const { config, logger, notifyStep, cwd } = deps;
   const baseUrl = normalizeBaseUrl(config.dhlottery.baseUrl);
   const selectors = mergeSelectorOverrides(config.dhlottery.selectorsOverride);
 
@@ -1194,6 +1269,15 @@ export const runLotteryPurchaseOnce = async (
       requiredDeposit
     };
   } catch (error) {
+    if (cwd && error instanceof AppError && shouldCaptureFailureArtifacts(error.code)) {
+      await captureFailureArtifacts(cwd, page, error, logger).catch((captureError) => {
+        logger.warn("브라우저 실패 진단 저장에 실패했습니다.", {
+          errorCode: error.code,
+          message: captureError instanceof Error ? captureError.message : String(captureError)
+        });
+      });
+    }
+
     if (error instanceof AppError) {
       throw error;
     }

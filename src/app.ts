@@ -78,6 +78,7 @@ export const runApp = async (deps: AppDependencies = {}): Promise<number> => {
     };
 
     const result = await runLotteryPurchaseOnceFn({
+      cwd,
       config,
       logger,
       notifyStep

@@ -27,6 +27,7 @@ const sampleConfig: AppConfig = {
 describe("app orchestration", () => {
   test("returns 0 on success and sends progress messages", async () => {
     const sentMessages: string[] = [];
+    let forwardedCwd = "";
 
     const exitCode = await runApp({
       cwd: "/tmp",
@@ -41,7 +42,8 @@ describe("app orchestration", () => {
           sentMessages.push(message);
         }
       }),
-      runLotteryPurchaseOnce: async ({ notifyStep }) => {
+      runLotteryPurchaseOnce: async ({ notifyStep, cwd }) => {
+        forwardedCwd = cwd;
         await notifyStep(1, 5, "사이트 접속을 완료했습니다.");
         await notifyStep(2, 5, "로그인을 완료했습니다.");
         return {
@@ -60,6 +62,7 @@ describe("app orchestration", () => {
     });
 
     expect(exitCode).toBe(0);
+    expect(forwardedCwd).toBe("/tmp");
     expect(sentMessages[0]).toContain("(1/5)");
     expect(sentMessages[1]).toContain("(2/5)");
     expect(sentMessages.at(-1)).toContain("구매 완료");
