@@ -82,6 +82,18 @@ export const resolvePopupPageIndex = (pageCountBeforeClick: number, pageCountAft
 export const pickLotto645PurchaseFrameIndex = (frameUrls: string[]): number =>
   frameUrls.findIndex((url) => url.includes("/game645.do"));
 
+export const isLikelyLotto645PurchaseFrame = (frameUrl: string, frameText: string): boolean => {
+  if (frameUrl.includes("/game645.do")) {
+    return true;
+  }
+
+  const normalizedText = frameText.replaceAll(/\s+/g, "");
+  const matchedHintCount = ["자동번호발급", "적용수량", "로또구매방법선택"].filter((token) =>
+    normalizedText.includes(token)
+  ).length;
+  return matchedHintCount >= 2;
+};
+
 const findFirstVisibleMatch = async (surface: PurchaseSurface, selector: string): Promise<Locator | null> => {
   const matches = surface.locator(selector);
   const count = await matches.count().catch(() => 0);
@@ -313,14 +325,27 @@ const attemptExtractPurchase = async (
 
 const resolvePurchaseSurface = async (page: Page): Promise<PurchaseSurface> => {
   await page.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
-  await sleep(1_000);
+  const deadline = Date.now() + 15_000;
 
-  const frames = page.frames();
-  const frameIndex = pickLotto645PurchaseFrameIndex(frames.map((frame) => frame.url()));
-  if (frameIndex >= 0) {
-    const frame = frames[frameIndex];
-    await frame.waitForLoadState("domcontentloaded", { timeout: 10_000 }).catch(() => undefined);
-    return frame;
+  while (Date.now() < deadline) {
+    const frames = page.frames();
+    for (const frame of frames) {
+      await frame.waitForLoadState("domcontentloaded", { timeout: 1_500 }).catch(() => undefined);
+      const frameText = await frame.locator("body").innerText({ timeout: 1_000 }).catch(() => "");
+      if (isLikelyLotto645PurchaseFrame(frame.url(), frameText)) {
+        return frame;
+      }
+    }
+
+    const pageText = await bodyText(page);
+    const hasPageSelectors =
+      (await page.locator("select#amoundApply").count().catch(() => 0)) > 0 ||
+      isLikelyLotto645PurchaseFrame(page.url(), pageText);
+    if (hasPageSelectors) {
+      return page;
+    }
+
+    await sleep(1_000);
   }
 
   return page;

@@ -7,6 +7,7 @@ import {
   calculateRequiredAmount,
   ensureSufficientDeposit,
   isKnownDhlotteryErrorPage,
+  isLikelyLotto645PurchaseFrame,
   pickLotto645PurchaseFrameIndex,
   pickFirstVisibleIndex,
   resolvePopupPageIndex,
@@ -84,5 +85,21 @@ describe("lottery/client logic", () => {
     expect(
       pickLotto645PurchaseFrameIndex(["https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40"])
     ).toBe(-1);
+  });
+
+  test("recognizes lotto645 purchase frame by url or loaded text hints", () => {
+    expect(
+      isLikelyLotto645PurchaseFrame(
+        "https://ol.dhlottery.co.kr/olotto/game/game645.do",
+        "로또 구매방법 선택 적용수량 구매하기"
+      )
+    ).toBe(true);
+    expect(
+      isLikelyLotto645PurchaseFrame(
+        "about:blank",
+        "자동번호발급 구매 수량 전체를 자동번호로 발급 받을 수 있습니다. 적용수량"
+      )
+    ).toBe(true);
+    expect(isLikelyLotto645PurchaseFrame("https://www.youtube.com/embed/abc", "video")).toBe(false);
   });
 });
