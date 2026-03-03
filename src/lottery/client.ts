@@ -55,6 +55,7 @@ interface PurchaseNavigationAttempt {
 
 interface PurchaseNavigationResult {
   surface: PurchaseSurface;
+  page: Page;
   debug: {
     chosenStrategy: string;
     attempts: PurchaseNavigationAttempt[];
@@ -326,6 +327,37 @@ const dismissBlockingAlertIfPresent = async (
   await alertConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
   await sleep(300);
   return true;
+};
+
+const getOwningPage = (surface: PurchaseSurface, fallbackPage: Page): Page =>
+  "page" in surface && typeof surface.page === "function" ? surface.page() : fallbackPage;
+
+const waitForPurchaseButtonSurface = async (
+  surface: PurchaseSurface,
+  page: Page,
+  selectors: SelectorGroups
+): Promise<PurchaseSurface> => {
+  const deadline = Date.now() + 10_000;
+  let currentSurface = surface;
+
+  while (Date.now() < deadline) {
+    if ((await countSelectors(currentSurface, selectors.purchaseButton)) > 0) {
+      return currentSurface;
+    }
+
+    await dismissBlockingAlertIfPresent(currentSurface, selectors);
+
+    const ownerPage = getOwningPage(currentSurface, page);
+    const resolved = await resolvePurchaseSurface(ownerPage, selectors);
+    currentSurface = resolved.surface;
+    if ((await countSelectors(currentSurface, selectors.purchaseButton)) > 0) {
+      return currentSurface;
+    }
+
+    await sleep(500);
+  }
+
+  return currentSurface;
 };
 
 const clickByCandidates = async (
@@ -721,6 +753,7 @@ const goToPurchasePage = async (
         attempts.push(attempt);
         return {
           surface: resolved.surface,
+          page: popupWait.popupPage,
           debug: {
             chosenStrategy: attempt.strategy,
             attempts
@@ -751,6 +784,7 @@ const goToPurchasePage = async (
         attempts.push(entryAttempt);
         return {
           surface: resolved.surface,
+          page: popupWait.popupPage,
           debug: {
             chosenStrategy: entryAttempt.strategy,
             attempts
@@ -768,6 +802,7 @@ const goToPurchasePage = async (
         attempts.push(entryAttempt);
         return {
           surface: resolved.surface,
+          page,
           debug: {
             chosenStrategy: `${entryAttempt.strategy}-same-page`,
             attempts
@@ -796,6 +831,7 @@ const goToPurchasePage = async (
         attempts.push(directAttempt);
         return {
           surface: resolved.surface,
+          page: preferredDirectNavigationPage,
           debug: {
             chosenStrategy: directAttempt.strategy,
             attempts
@@ -1017,7 +1053,7 @@ export const runLotteryPurchaseOnce = async (
     await notifyStep(3, TOTAL_STEPS, progressDescription(3, TOTAL_STEPS));
 
     const purchaseNavigation = await goToPurchasePage(page, baseUrl, selectors);
-    const purchaseSurface = purchaseNavigation.surface;
+    let purchaseSurface = purchaseNavigation.surface;
     logger.info("로또 구매 surface 선택", purchaseNavigation.debug);
 
     const autoSelect = await findVisibleLocator(purchaseSurface, selectors.autoSelectTab, 2_000);
@@ -1035,6 +1071,12 @@ export const runLotteryPurchaseOnce = async (
       await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
       await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
     }
+
+    purchaseSurface = await waitForPurchaseButtonSurface(
+      purchaseSurface,
+      purchaseNavigation.page,
+      selectors
+    );
 
     await clickByCandidates(
       purchaseSurface,
