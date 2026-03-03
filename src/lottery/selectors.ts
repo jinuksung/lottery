@@ -107,8 +107,7 @@ export const DEFAULT_SELECTORS: SelectorGroups = {
   ],
   selectionConfirmButton: [
     "input#btnSelectNum",
-    "input[name='btnSelectNum']",
-    "input[value='확인']"
+    "input[name='btnSelectNum']"
   ],
   alertConfirmButton: [
     "#popupLayerAlert input[value='확인']",
@@ -126,10 +125,7 @@ export const DEFAULT_SELECTORS: SelectorGroups = {
   purchaseConfirmButton: [
     "#popupLayerConfirm input[value='확인']",
     "input[onclick*='closepopupLayerConfirm(true)']",
-    "#popupLayerConfirm .button.confirm",
-    "button:has-text('확인')",
-    "a:has-text('확인')",
-    "text=확인"
+    "#popupLayerConfirm .button.confirm"
   ],
   purchaseResultArea: [
     "#report",
