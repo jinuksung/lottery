@@ -119,6 +119,9 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+export const truncateLogText = (text: string, maxLength = 240): string =>
+  text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+
 const bodyText = async (surface: PurchaseSurface): Promise<string> => {
   const text = await surface.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
   return text ?? "";
@@ -329,6 +332,21 @@ const dismissBlockingAlertIfPresent = async (
   return true;
 };
 
+const collectPurchaseStageSnapshot = async (
+  surface: PurchaseSurface,
+  selectors: SelectorGroups
+): Promise<Record<string, unknown>> => ({
+  surfaceUrl: surface.url(),
+  counts: {
+    purchaseButton: await countSelectors(surface, selectors.purchaseButton),
+    selectionConfirmButton: await countSelectors(surface, selectors.selectionConfirmButton),
+    alertConfirmButton: await countSelectors(surface, selectors.alertConfirmButton),
+    purchaseConfirmButton: await countSelectors(surface, selectors.purchaseConfirmButton),
+    resultArea: await countSelectors(surface, selectors.purchaseResultArea)
+  },
+  bodyPreview: truncateLogText((await bodyText(surface)).replaceAll(/\s+/g, " ").trim(), 400)
+});
+
 const getOwningPage = (surface: PurchaseSurface, fallbackPage: Page): Page =>
   "page" in surface && typeof surface.page === "function" ? surface.page() : fallbackPage;
 
@@ -379,7 +397,8 @@ const clickByCandidates = async (
   if (!visibleLocator && !useAttachedDomClick) {
     throw new AppError(errorCode, errorMessage, {
       selectors,
-      attachedLocatorFound: Boolean(attachedLocator)
+      attachedLocatorFound: Boolean(attachedLocator),
+      purchaseStageSnapshot: await collectPurchaseStageSnapshot(surface, selectorGroups)
     });
   }
 
@@ -393,7 +412,8 @@ const clickByCandidates = async (
       throw new AppError(errorCode, errorMessage, {
         selectors,
         attachedLocatorFound: true,
-        originalError: error instanceof Error ? error.message : String(error)
+        originalError: error instanceof Error ? error.message : String(error),
+        purchaseStageSnapshot: await collectPurchaseStageSnapshot(surface, selectorGroups)
       });
     }
   }
@@ -401,7 +421,8 @@ const clickByCandidates = async (
   if (!visibleLocator) {
     throw new AppError(errorCode, errorMessage, {
       selectors,
-      attachedLocatorFound: Boolean(attachedLocator)
+      attachedLocatorFound: Boolean(attachedLocator),
+      purchaseStageSnapshot: await collectPurchaseStageSnapshot(surface, selectorGroups)
     });
   }
 
@@ -417,14 +438,16 @@ const clickByCandidates = async (
       } catch (retryError) {
         throw new AppError(errorCode, errorMessage, {
           selectors,
-          originalError: retryError instanceof Error ? retryError.message : String(retryError)
+          originalError: retryError instanceof Error ? retryError.message : String(retryError),
+          purchaseStageSnapshot: await collectPurchaseStageSnapshot(surface, selectorGroups)
         });
       }
     }
 
     throw new AppError(errorCode, errorMessage, {
       selectors,
-      originalError
+      originalError,
+      purchaseStageSnapshot: await collectPurchaseStageSnapshot(surface, selectorGroups)
     });
   }
 };

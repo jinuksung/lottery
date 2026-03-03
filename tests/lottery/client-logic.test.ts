@@ -14,6 +14,7 @@ import {
   isLoginPageUrl,
   shouldUseAttachedDomClickFallback,
   shouldTreatMypageRedirectAsLoginFailure,
+  truncateLogText,
   isKnownDhlotteryErrorPage,
   isLikelyLotto645PurchaseFrame,
   pickPopupPageIndexFromSnapshots,
@@ -185,5 +186,10 @@ describe("lottery/client logic", () => {
     expect(shouldUseAttachedDomClickFallback(false, false, true)).toBe(false);
     expect(shouldUseAttachedDomClickFallback(true, true, true)).toBe(false);
     expect(shouldUseAttachedDomClickFallback(false, true, false)).toBe(false);
+  });
+
+  test("truncates long diagnostic text for logs", () => {
+    expect(truncateLogText("abc", 5)).toBe("abc");
+    expect(truncateLogText("abcdefghij", 5)).toBe("abcde...");
   });
 });
