@@ -11,6 +11,8 @@ import {
   hasPurchaseSelectorHints,
   isConfirmedPurchaseSurfaceReason,
   isAlertInterceptionError,
+  isLoginPageUrl,
+  shouldTreatMypageRedirectAsLoginFailure,
   isKnownDhlotteryErrorPage,
   isLikelyLotto645PurchaseFrame,
   pickPopupPageIndexFromSnapshots,
@@ -154,5 +156,26 @@ describe("lottery/client logic", () => {
       )
     ).toBe(true);
     expect(isAlertInterceptionError("locator.click: element is not attached")).toBe(false);
+  });
+
+  test("recognizes login page urls for post-login validation", () => {
+    expect(isLoginPageUrl("https://www.dhlottery.co.kr/login")).toBe(true);
+    expect(isLoginPageUrl("https://www.dhlottery.co.kr/user.do?method=login")).toBe(true);
+    expect(isLoginPageUrl("https://www.dhlottery.co.kr/mypage/home")).toBe(false);
+  });
+
+  test("treats mypage redirect back to login as login failure", () => {
+    expect(
+      shouldTreatMypageRedirectAsLoginFailure(
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://www.dhlottery.co.kr/login"
+      )
+    ).toBe(true);
+    expect(
+      shouldTreatMypageRedirectAsLoginFailure(
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://www.dhlottery.co.kr/mypage/home"
+      )
+    ).toBe(false);
   });
 });

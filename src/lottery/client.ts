@@ -453,6 +453,16 @@ export const isConfirmedPurchaseSurfaceReason = (
 export const isAlertInterceptionError = (message: string): boolean =>
   message.includes("popupLayerAlert") && message.includes("intercepts pointer events");
 
+export const isLoginPageUrl = (url: string): boolean => {
+  const lowerUrl = url.toLowerCase();
+  return lowerUrl.includes("/login") || lowerUrl.includes("method=login");
+};
+
+export const shouldTreatMypageRedirectAsLoginFailure = (
+  mypageHomeUrl: string,
+  currentUrl: string
+): boolean => currentUrl !== mypageHomeUrl && isLoginPageUrl(currentUrl);
+
 const isCredentialError = (pageText: string): boolean => {
   const normalized = pageText.replaceAll(" ", "");
   return ["아이디혹은비밀번호", "비밀번호가일치하지", "로그인에실패"].some((token) =>
@@ -464,6 +474,35 @@ const applyDialogAutoAccept = (page: Page): void => {
   page.on("dialog", async (dialog) => {
     await dialog.accept().catch(() => undefined);
   });
+};
+
+const waitForLoginSuccess = async (page: Page, selectors: SelectorGroups): Promise<void> => {
+  const deadline = Date.now() + 10_000;
+
+  while (Date.now() < deadline) {
+    const loggedIn = await findVisibleLocator(page, selectors.loggedInIndicator, 500);
+    if (loggedIn) {
+      return;
+    }
+
+    const text = await bodyText(page);
+    if (detectAdditionalAuthRequired(text)) {
+      throw new AppError(
+        AppErrorCode.ERR03_ADDITIONAL_AUTH_REQUIRED,
+        "추가 인증(캡차/OTP/휴대폰 인증)이 필요합니다."
+      );
+    }
+
+    if (isCredentialError(text)) {
+      throw new AppError(AppErrorCode.ERR02_INVALID_CREDENTIALS, "아이디 또는 비밀번호가 일치하지 않습니다.");
+    }
+
+    if (!isLoginPageUrl(page.url()) && !text.includes("로그인")) {
+      return;
+    }
+
+    await sleep(500);
+  }
 };
 
 const attemptExtractPurchase = async (
@@ -862,7 +901,8 @@ const login = async (
   );
 
   await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
-  await sleep(1_000);
+  await waitForLoginSuccess(page, selectors);
+  await sleep(500);
 
   const afterLoginText = await bodyText(page);
   if (detectAdditionalAuthRequired(afterLoginText)) {
@@ -917,6 +957,12 @@ export const runLotteryPurchaseOnce = async (
     await login(page, selectors, baseUrl, config.credentials.id, config.credentials.password, logger);
     const mypageHomeUrl = buildPostLoginHomeUrl(baseUrl);
     await page.goto(mypageHomeUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (shouldTreatMypageRedirectAsLoginFailure(mypageHomeUrl, page.url())) {
+      throw new AppError(AppErrorCode.ERR04_LOGIN_TIMEOUT, "로그인 상태 확인에 실패했습니다.", {
+        currentUrl: page.url(),
+        mypageHomeUrl
+      });
+    }
     logger.info("로그인 완료", { url: page.url(), mypageHomeUrl });
     await notifyStep(2, TOTAL_STEPS, progressDescription(2, TOTAL_STEPS));
 
