@@ -182,8 +182,7 @@ export const hasPurchaseSelectorHints = (counts: {
 }): boolean =>
   counts.gameCount > 0 ||
   (counts.gameCountInput ?? 0) > 0 ||
-  counts.autoSelect > 0 ||
-  counts.purchaseButton > 0;
+  counts.autoSelect > 0;
 
 const countSelectors = async (surface: PurchaseSurface, selectors: string[]): Promise<number> => {
   for (const selector of selectors) {
@@ -678,7 +677,9 @@ const resolvePurchaseSurface = async (
     pageProbe.matchedBySelectors = hasPurchaseSelectorHints(pageProbe.counts);
     lastCandidates = [...frameCandidates.map((candidate) => candidate.probe), pageProbe];
 
-    const matchedFrameCandidate = frameCandidates.find(({ probe }) => probe.matchedByUrl || probe.matchedByText);
+    const matchedFrameCandidate = frameCandidates.find(
+      ({ probe }) => probe.matchedByUrl && (probe.matchedByText || probe.matchedBySelectors)
+    );
     if (matchedFrameCandidate) {
       const selectedReason = matchedFrameCandidate.probe.matchedByUrl ? "url" : "text";
       return {
@@ -707,7 +708,7 @@ const resolvePurchaseSurface = async (
       };
     }
 
-    if (pageProbe.matchedByUrl || pageProbe.matchedByText || pageProbe.matchedBySelectors) {
+    if (pageProbe.matchedByText || pageProbe.matchedBySelectors) {
       const selectedReason = pageProbe.matchedByUrl
         ? "url"
         : pageProbe.matchedByText

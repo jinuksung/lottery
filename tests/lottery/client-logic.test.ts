@@ -140,7 +140,7 @@ describe("lottery/client logic", () => {
       true
     );
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 1, purchaseButton: 0 })).toBe(true);
-    expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 1 })).toBe(true);
+    expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 1 })).toBe(false);
     expect(hasPurchaseSelectorHints({ gameCount: 0, autoSelect: 0, purchaseButton: 0 })).toBe(false);
   });
 
