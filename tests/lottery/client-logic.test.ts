@@ -12,6 +12,7 @@ import {
   isConfirmedPurchaseSurfaceReason,
   isAlertInterceptionError,
   isLoginPageUrl,
+  shouldRetryPostLoginHomeNavigation,
   shouldUseAttachedDomClickFallback,
   shouldTreatMypageRedirectAsLoginFailure,
   truncateLogText,
@@ -177,6 +178,41 @@ describe("lottery/client logic", () => {
       shouldTreatMypageRedirectAsLoginFailure(
         "https://www.dhlottery.co.kr/mypage/home",
         "https://www.dhlottery.co.kr/mypage/home"
+      )
+    ).toBe(false);
+  });
+
+  test("retries post-login mypage navigation while session is still settling", () => {
+    expect(
+      shouldRetryPostLoginHomeNavigation(
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://www.dhlottery.co.kr/login",
+        1,
+        3
+      )
+    ).toBe(true);
+    expect(
+      shouldRetryPostLoginHomeNavigation(
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://www.dhlottery.co.kr/user.do?method=login",
+        2,
+        3
+      )
+    ).toBe(true);
+    expect(
+      shouldRetryPostLoginHomeNavigation(
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://www.dhlottery.co.kr/login",
+        3,
+        3
+      )
+    ).toBe(false);
+    expect(
+      shouldRetryPostLoginHomeNavigation(
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://www.dhlottery.co.kr/mypage/home",
+        1,
+        3
       )
     ).toBe(false);
   });

@@ -555,6 +555,13 @@ export const shouldTreatMypageRedirectAsLoginFailure = (
   currentUrl: string
 ): boolean => currentUrl !== mypageHomeUrl && isLoginPageUrl(currentUrl);
 
+export const shouldRetryPostLoginHomeNavigation = (
+  mypageHomeUrl: string,
+  currentUrl: string,
+  attempt: number,
+  maxAttempts: number
+): boolean => attempt < maxAttempts && shouldTreatMypageRedirectAsLoginFailure(mypageHomeUrl, currentUrl);
+
 export const shouldUseAttachedDomClickFallback = (
   hasVisibleLocator: boolean,
   hasAttachedLocator: boolean,
@@ -595,12 +602,48 @@ const waitForLoginSuccess = async (page: Page, selectors: SelectorGroups): Promi
       throw new AppError(AppErrorCode.ERR02_INVALID_CREDENTIALS, "아이디 또는 비밀번호가 일치하지 않습니다.");
     }
 
-    if (!isLoginPageUrl(page.url()) && !text.includes("로그인")) {
+    const normalizedText = text.replaceAll(/\s+/g, "");
+    if (
+      !isLoginPageUrl(page.url()) &&
+      (normalizedText.includes("로그아웃") || normalizedText.includes("마이페이지"))
+    ) {
       return;
     }
 
     await sleep(500);
   }
+};
+
+const navigateToVerifiedMypageHome = async (
+  page: Page,
+  mypageHomeUrl: string,
+  logger: Logger
+): Promise<void> => {
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await page.goto(mypageHomeUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    if (!shouldTreatMypageRedirectAsLoginFailure(mypageHomeUrl, page.url())) {
+      return;
+    }
+
+    if (!shouldRetryPostLoginHomeNavigation(mypageHomeUrl, page.url(), attempt, maxAttempts)) {
+      break;
+    }
+
+    logger.warn("마이페이지 접근이 로그인으로 리다이렉트되어 재시도합니다.", {
+      attempt,
+      maxAttempts,
+      currentUrl: page.url(),
+      mypageHomeUrl
+    });
+    await sleep(attempt * 1_000);
+  }
+
+  throw new AppError(AppErrorCode.ERR04_LOGIN_TIMEOUT, "로그인 상태 확인에 실패했습니다.", {
+    currentUrl: page.url(),
+    mypageHomeUrl
+  });
 };
 
 const attemptExtractPurchase = async (
@@ -1060,13 +1103,7 @@ export const runLotteryPurchaseOnce = async (
 
     await login(page, selectors, baseUrl, config.credentials.id, config.credentials.password, logger);
     const mypageHomeUrl = buildPostLoginHomeUrl(baseUrl);
-    await page.goto(mypageHomeUrl, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    if (shouldTreatMypageRedirectAsLoginFailure(mypageHomeUrl, page.url())) {
-      throw new AppError(AppErrorCode.ERR04_LOGIN_TIMEOUT, "로그인 상태 확인에 실패했습니다.", {
-        currentUrl: page.url(),
-        mypageHomeUrl
-      });
-    }
+    await navigateToVerifiedMypageHome(page, mypageHomeUrl, logger);
     logger.info("로그인 완료", { url: page.url(), mypageHomeUrl });
     await notifyStep(2, TOTAL_STEPS, progressDescription(2, TOTAL_STEPS));
 
