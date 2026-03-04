@@ -352,6 +352,25 @@ const collectPurchaseStageSnapshot = async (
 const getOwningPage = (surface: PurchaseSurface, fallbackPage: Page): Page =>
   "page" in surface && typeof surface.page === "function" ? surface.page() : fallbackPage;
 
+const logPurchaseStageContext = (
+  logger: Logger,
+  stage: string,
+  page: Page,
+  surface?: PurchaseSurface,
+  extra: Record<string, unknown> = {}
+): void => {
+  const pageUrls = page.context().pages().map((candidatePage) => candidatePage.url());
+  const activePageUrl = page.url();
+  const ownerPageUrl = surface ? getOwningPage(surface, page).url() : undefined;
+  const surfaceUrl = surface?.url();
+
+  logger.info("구매 단계 컨텍스트", {
+    stage,
+    ...buildPurchaseContextSnapshot(pageUrls, activePageUrl, ownerPageUrl, surfaceUrl),
+    ...extra
+  });
+};
+
 const waitForPurchaseButtonSurface = async (
   surface: PurchaseSurface,
   page: Page,
@@ -597,6 +616,19 @@ export const shouldUseAttachedDomClickFallback = (
   preferAttachedDomClick: boolean
 ): boolean => !hasVisibleLocator && hasAttachedLocator && preferAttachedDomClick;
 
+export const buildPurchaseContextSnapshot = (
+  pageUrls: string[],
+  activePageUrl: string,
+  ownerPageUrl?: string,
+  surfaceUrl?: string
+): Record<string, unknown> => ({
+  openPageCount: pageUrls.length,
+  pageUrls,
+  activePageUrl,
+  ownerPageUrl,
+  surfaceUrl
+});
+
 const isCredentialError = (pageText: string): boolean => {
   const normalized = pageText.replaceAll(" ", "");
   return ["아이디혹은비밀번호", "비밀번호가일치하지", "로그인에실패"].some((token) =>
@@ -754,13 +786,20 @@ const preparePurchaseSurfaceForBuying = async (
   const purchaseNavigation = await goToPurchasePage(page, baseUrl, selectors);
   let purchaseSurface = purchaseNavigation.surface;
   logger.info("로또 구매 surface 선택", purchaseNavigation.debug);
+  logPurchaseStageContext(logger, "after-goToPurchasePage", page, purchaseSurface);
 
   const autoSelect = await findVisibleLocator(purchaseSurface, selectors.autoSelectTab, 2_000);
   if (autoSelect) {
     await autoSelect.click({ timeout: 5_000 }).catch(() => undefined);
   }
+  logPurchaseStageContext(logger, "after-autoSelect", page, purchaseSurface, {
+    autoSelectFound: Boolean(autoSelect)
+  });
 
   await selectGameCount(purchaseSurface, selectors, gameCount, purchaseNavigation.debug);
+  logPurchaseStageContext(logger, "after-selectGameCount", page, purchaseSurface, {
+    gameCount
+  });
   const selectionConfirmButton = await findVisibleLocator(
     purchaseSurface,
     selectors.selectionConfirmButton,
@@ -770,8 +809,12 @@ const preparePurchaseSurfaceForBuying = async (
     await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
     await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
   }
+  logPurchaseStageContext(logger, "after-selectionConfirm", page, purchaseSurface, {
+    selectionConfirmFound: Boolean(selectionConfirmButton)
+  });
 
   purchaseSurface = await waitForPurchaseButtonSurface(purchaseSurface, purchaseNavigation.page, selectors);
+  logPurchaseStageContext(logger, "after-waitForPurchaseButtonSurface", page, purchaseSurface);
   return {
     purchaseSurface,
     popupPage: purchaseNavigation.page,
@@ -1252,6 +1295,10 @@ export const runLotteryPurchaseOnce = async (
     const maxPurchaseClickAttempts = 3;
     for (let purchaseClickAttempt = 1; purchaseClickAttempt <= maxPurchaseClickAttempts; purchaseClickAttempt += 1) {
       try {
+        logPurchaseStageContext(logger, "before-purchaseButtonClick", page, purchaseSurface, {
+          purchaseClickAttempt,
+          maxPurchaseClickAttempts
+        });
         await clickByCandidates(
           purchaseSurface,
           selectors,
@@ -1260,6 +1307,10 @@ export const runLotteryPurchaseOnce = async (
           "구매하기 버튼을 찾지 못했습니다.",
           { preferAttachedDomClick: true }
         );
+        logPurchaseStageContext(logger, "after-purchaseButtonClick", page, purchaseSurface, {
+          purchaseClickAttempt,
+          maxPurchaseClickAttempts
+        });
         break;
       } catch (error) {
         if (
@@ -1273,6 +1324,12 @@ export const runLotteryPurchaseOnce = async (
               | undefined
           )
         ) {
+          logPurchaseStageContext(logger, "purchaseButtonClick-failed-retryable", page, purchaseSurface, {
+            purchaseClickAttempt,
+            maxPurchaseClickAttempts,
+            errorCode: error.code,
+            purchaseStageSnapshot: error.details?.purchaseStageSnapshot
+          });
           logger.warn("구매 팝업이 유실되어 구매 준비를 다시 시도합니다.", {
             purchaseClickAttempt,
             maxPurchaseClickAttempts,
@@ -1285,6 +1342,11 @@ export const runLotteryPurchaseOnce = async (
           continue;
         }
 
+        logPurchaseStageContext(logger, "purchaseButtonClick-failed-terminal", page, purchaseSurface, {
+          purchaseClickAttempt,
+          maxPurchaseClickAttempts,
+          errorCode: error instanceof AppError ? error.code : "unknown"
+        });
         throw error;
       }
     }

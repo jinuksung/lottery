@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { AppErrorCode } from "../../src/core/errors";
 import {
   buildBrowserContextOptions,
+  buildPurchaseContextSnapshot,
   buildPurchasePageUrlCandidates,
   buildInitialNavigationUrl,
   buildLoginUrlCandidates,
@@ -288,5 +289,25 @@ describe("lottery/client logic", () => {
   test("truncates long diagnostic text for logs", () => {
     expect(truncateLogText("abc", 5)).toBe("abc");
     expect(truncateLogText("abcdefghij", 5)).toBe("abcde...");
+  });
+
+  test("builds a purchase context snapshot for stage-by-stage diagnostics", () => {
+    expect(
+      buildPurchaseContextSnapshot(
+        ["https://www.dhlottery.co.kr/mypage/home", "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40"],
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40",
+        "https://ol.dhlottery.co.kr/olotto/game/game645.do"
+      )
+    ).toEqual({
+      openPageCount: 2,
+      pageUrls: [
+        "https://www.dhlottery.co.kr/mypage/home",
+        "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40"
+      ],
+      activePageUrl: "https://www.dhlottery.co.kr/mypage/home",
+      ownerPageUrl: "https://el.dhlottery.co.kr/game/TotalGame.jsp?LottoId=LO40",
+      surfaceUrl: "https://ol.dhlottery.co.kr/olotto/game/game645.do"
+    });
   });
 });
