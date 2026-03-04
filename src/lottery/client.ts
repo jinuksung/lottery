@@ -614,6 +614,12 @@ export const shouldDisableSelectionConfirmAfterPopupLoss = (
   details: Record<string, unknown> | undefined
 ): boolean => details?.popupLostAfterSelectionConfirm === true;
 
+export const shouldRetryPrepareAfterPopupLoss = (
+  attempt: number,
+  maxAttempts: number,
+  details: Record<string, unknown> | undefined
+): boolean => attempt < maxAttempts && shouldDisableSelectionConfirmAfterPopupLoss(details);
+
 export const shouldUseAttachedDomClickFallback = (
   hasVisibleLocator: boolean,
   hasAttachedLocator: boolean,
@@ -833,6 +839,53 @@ const preparePurchaseSurfaceForBuying = async (
     popupPage: purchaseNavigation.page,
     purchaseDebug: purchaseNavigation.debug
   };
+};
+
+const preparePurchaseSurfaceWithRecovery = async (
+  page: Page,
+  baseUrl: string,
+  selectors: SelectorGroups,
+  gameCount: number,
+  logger: Logger,
+  initialUseSelectionConfirm: boolean
+): Promise<{ purchaseSurface: PurchaseSurface; useSelectionConfirm: boolean }> => {
+  const maxPrepareAttempts = 3;
+  let useSelectionConfirm = initialUseSelectionConfirm;
+
+  for (let prepareAttempt = 1; prepareAttempt <= maxPrepareAttempts; prepareAttempt += 1) {
+    try {
+      const prepared = await preparePurchaseSurfaceForBuying(
+        page,
+        baseUrl,
+        selectors,
+        gameCount,
+        logger,
+        useSelectionConfirm
+      );
+      return {
+        purchaseSurface: prepared.purchaseSurface,
+        useSelectionConfirm
+      };
+    } catch (error) {
+      if (
+        error instanceof AppError &&
+        error.code === AppErrorCode.ERR06_PURCHASE_FAILURE &&
+        shouldRetryPrepareAfterPopupLoss(prepareAttempt, maxPrepareAttempts, error.details)
+      ) {
+        useSelectionConfirm = false;
+        logger.warn("선택 확인 후 팝업 유실을 감지하여 구매 준비를 재시도합니다.", {
+          prepareAttempt,
+          maxPrepareAttempts,
+          useSelectionConfirm
+        });
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new AppError(AppErrorCode.ERR06_PURCHASE_FAILURE, "구매 surface 준비에 실패했습니다.");
 };
 
 const attemptExtractPurchase = async (
@@ -1303,16 +1356,16 @@ export const runLotteryPurchaseOnce = async (
     await notifyStep(3, TOTAL_STEPS, progressDescription(3, TOTAL_STEPS));
 
     let useSelectionConfirm = true;
-    let purchaseSurface = (
-      await preparePurchaseSurfaceForBuying(
-        page,
-        baseUrl,
-        selectors,
-        config.purchase.gameCount,
-        logger,
-        useSelectionConfirm
-      )
-    ).purchaseSurface;
+    let prepareResult = await preparePurchaseSurfaceWithRecovery(
+      page,
+      baseUrl,
+      selectors,
+      config.purchase.gameCount,
+      logger,
+      useSelectionConfirm
+    );
+    let purchaseSurface = prepareResult.purchaseSurface;
+    useSelectionConfirm = prepareResult.useSelectionConfirm;
     const maxPurchaseClickAttempts = 3;
     for (let purchaseClickAttempt = 1; purchaseClickAttempt <= maxPurchaseClickAttempts; purchaseClickAttempt += 1) {
       try {
@@ -1363,16 +1416,16 @@ export const runLotteryPurchaseOnce = async (
             purchaseStageSnapshot: error.details?.purchaseStageSnapshot,
             useSelectionConfirm
           });
-          purchaseSurface = (
-            await preparePurchaseSurfaceForBuying(
-              page,
-              baseUrl,
-              selectors,
-              config.purchase.gameCount,
-              logger,
-              useSelectionConfirm
-            )
-          ).purchaseSurface;
+          prepareResult = await preparePurchaseSurfaceWithRecovery(
+            page,
+            baseUrl,
+            selectors,
+            config.purchase.gameCount,
+            logger,
+            useSelectionConfirm
+          );
+          purchaseSurface = prepareResult.purchaseSurface;
+          useSelectionConfirm = prepareResult.useSelectionConfirm;
           continue;
         }
 

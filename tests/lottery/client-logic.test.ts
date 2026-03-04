@@ -15,6 +15,7 @@ import {
   isLoginPageUrl,
   shouldCaptureFailureArtifacts,
   shouldDisableSelectionConfirmAfterPopupLoss,
+  shouldRetryPrepareAfterPopupLoss,
   shouldRetryAfterLostPurchaseSurface,
   shouldRetryPostLoginHomeNavigation,
   shouldUseAttachedDomClickFallback,
@@ -284,6 +285,13 @@ describe("lottery/client logic", () => {
     expect(shouldDisableSelectionConfirmAfterPopupLoss(undefined)).toBe(false);
     expect(shouldDisableSelectionConfirmAfterPopupLoss({ popupLostAfterSelectionConfirm: false })).toBe(false);
     expect(shouldDisableSelectionConfirmAfterPopupLoss({ popupLostAfterSelectionConfirm: true })).toBe(true);
+  });
+
+  test("retries purchase-prepare flow while popup-loss signal is present", () => {
+    expect(shouldRetryPrepareAfterPopupLoss(1, 3, { popupLostAfterSelectionConfirm: true })).toBe(true);
+    expect(shouldRetryPrepareAfterPopupLoss(2, 3, { popupLostAfterSelectionConfirm: true })).toBe(true);
+    expect(shouldRetryPrepareAfterPopupLoss(3, 3, { popupLostAfterSelectionConfirm: true })).toBe(false);
+    expect(shouldRetryPrepareAfterPopupLoss(1, 3, { popupLostAfterSelectionConfirm: false })).toBe(false);
   });
 
   test("allows attached dom click fallback only when explicitly requested", () => {
