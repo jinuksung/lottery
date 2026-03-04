@@ -610,6 +610,10 @@ export const shouldRetryAfterLostPurchaseSurface = (
   return allCountsZero && !purchaseStageSnapshot.bodyPreview;
 };
 
+export const shouldDisableSelectionConfirmAfterPopupLoss = (
+  details: Record<string, unknown> | undefined
+): boolean => details?.popupLostAfterSelectionConfirm === true;
+
 export const shouldUseAttachedDomClickFallback = (
   hasVisibleLocator: boolean,
   hasAttachedLocator: boolean,
@@ -777,7 +781,8 @@ const preparePurchaseSurfaceForBuying = async (
   baseUrl: string,
   selectors: SelectorGroups,
   gameCount: number,
-  logger: Logger
+  logger: Logger,
+  useSelectionConfirm: boolean
 ): Promise<{
   purchaseSurface: PurchaseSurface;
   popupPage: Page;
@@ -798,19 +803,27 @@ const preparePurchaseSurfaceForBuying = async (
 
   await selectGameCount(purchaseSurface, selectors, gameCount, purchaseNavigation.debug);
   logPurchaseStageContext(logger, "after-selectGameCount", page, purchaseSurface, {
-    gameCount
+    gameCount,
+    useSelectionConfirm
   });
-  const selectionConfirmButton = await findVisibleLocator(
-    purchaseSurface,
-    selectors.selectionConfirmButton,
-    2_500
-  );
-  if (selectionConfirmButton) {
-    await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
-    await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
+  let selectionConfirmButton: Locator | null = null;
+  if (useSelectionConfirm) {
+    selectionConfirmButton = await findVisibleLocator(purchaseSurface, selectors.selectionConfirmButton, 2_500);
+    if (selectionConfirmButton) {
+      await selectionConfirmButton.click({ timeout: 5_000 }).catch(() => undefined);
+      await dismissBlockingAlertIfPresent(purchaseSurface, selectors);
+      const openPageCountAfterSelectionConfirm = page.context().pages().length;
+      if (openPageCountAfterSelectionConfirm <= 1) {
+        throw new AppError(AppErrorCode.ERR06_PURCHASE_FAILURE, "선택 확인 후 구매 팝업이 닫혔습니다.", {
+          popupLostAfterSelectionConfirm: true,
+          purchaseStageSnapshot: await collectPurchaseStageSnapshot(purchaseSurface, selectors)
+        });
+      }
+    }
   }
   logPurchaseStageContext(logger, "after-selectionConfirm", page, purchaseSurface, {
-    selectionConfirmFound: Boolean(selectionConfirmButton)
+    selectionConfirmFound: Boolean(selectionConfirmButton),
+    useSelectionConfirm
   });
 
   purchaseSurface = await waitForPurchaseButtonSurface(purchaseSurface, purchaseNavigation.page, selectors);
@@ -1289,8 +1302,16 @@ export const runLotteryPurchaseOnce = async (
     ensureSufficientDeposit(availableDeposit, requiredDeposit);
     await notifyStep(3, TOTAL_STEPS, progressDescription(3, TOTAL_STEPS));
 
+    let useSelectionConfirm = true;
     let purchaseSurface = (
-      await preparePurchaseSurfaceForBuying(page, baseUrl, selectors, config.purchase.gameCount, logger)
+      await preparePurchaseSurfaceForBuying(
+        page,
+        baseUrl,
+        selectors,
+        config.purchase.gameCount,
+        logger,
+        useSelectionConfirm
+      )
     ).purchaseSurface;
     const maxPurchaseClickAttempts = 3;
     for (let purchaseClickAttempt = 1; purchaseClickAttempt <= maxPurchaseClickAttempts; purchaseClickAttempt += 1) {
@@ -1316,28 +1337,41 @@ export const runLotteryPurchaseOnce = async (
         if (
           error instanceof AppError &&
           error.code === AppErrorCode.ERR06_PURCHASE_FAILURE &&
-          shouldRetryAfterLostPurchaseSurface(
+          (shouldRetryAfterLostPurchaseSurface(
             purchaseClickAttempt,
             maxPurchaseClickAttempts,
             error.details?.purchaseStageSnapshot as
               | { counts?: Record<string, number>; bodyPreview?: string }
               | undefined
-          )
+          ) ||
+            shouldDisableSelectionConfirmAfterPopupLoss(error.details))
         ) {
+          if (shouldDisableSelectionConfirmAfterPopupLoss(error.details)) {
+            useSelectionConfirm = false;
+          }
           logPurchaseStageContext(logger, "purchaseButtonClick-failed-retryable", page, purchaseSurface, {
             purchaseClickAttempt,
             maxPurchaseClickAttempts,
             errorCode: error.code,
-            purchaseStageSnapshot: error.details?.purchaseStageSnapshot
+            purchaseStageSnapshot: error.details?.purchaseStageSnapshot,
+            useSelectionConfirm
           });
           logger.warn("구매 팝업이 유실되어 구매 준비를 다시 시도합니다.", {
             purchaseClickAttempt,
             maxPurchaseClickAttempts,
             openPages: page.context().pages().length,
-            purchaseStageSnapshot: error.details?.purchaseStageSnapshot
+            purchaseStageSnapshot: error.details?.purchaseStageSnapshot,
+            useSelectionConfirm
           });
           purchaseSurface = (
-            await preparePurchaseSurfaceForBuying(page, baseUrl, selectors, config.purchase.gameCount, logger)
+            await preparePurchaseSurfaceForBuying(
+              page,
+              baseUrl,
+              selectors,
+              config.purchase.gameCount,
+              logger,
+              useSelectionConfirm
+            )
           ).purchaseSurface;
           continue;
         }

@@ -14,6 +14,7 @@ import {
   isAlertInterceptionError,
   isLoginPageUrl,
   shouldCaptureFailureArtifacts,
+  shouldDisableSelectionConfirmAfterPopupLoss,
   shouldRetryAfterLostPurchaseSurface,
   shouldRetryPostLoginHomeNavigation,
   shouldUseAttachedDomClickFallback,
@@ -277,6 +278,12 @@ describe("lottery/client logic", () => {
         bodyPreview: "로또구매방법선택"
       })
     ).toBe(false);
+  });
+
+  test("disables selection-confirm click after popup-loss signal", () => {
+    expect(shouldDisableSelectionConfirmAfterPopupLoss(undefined)).toBe(false);
+    expect(shouldDisableSelectionConfirmAfterPopupLoss({ popupLostAfterSelectionConfirm: false })).toBe(false);
+    expect(shouldDisableSelectionConfirmAfterPopupLoss({ popupLostAfterSelectionConfirm: true })).toBe(true);
   });
 
   test("allows attached dom click fallback only when explicitly requested", () => {
