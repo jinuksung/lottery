@@ -573,7 +573,8 @@ export const shouldCaptureFailureArtifacts = (code: AppErrorCode): boolean =>
   ].includes(code);
 
 export const shouldRetryAfterLostPurchaseSurface = (
-  openPageCount: number,
+  attempt: number,
+  maxAttempts: number,
   purchaseStageSnapshot:
     | {
         counts?: Record<string, number>;
@@ -581,7 +582,7 @@ export const shouldRetryAfterLostPurchaseSurface = (
       }
     | undefined
 ): boolean => {
-  if (!purchaseStageSnapshot || openPageCount > 1) {
+  if (!purchaseStageSnapshot || attempt >= maxAttempts) {
     return false;
   }
 
@@ -1245,45 +1246,12 @@ export const runLotteryPurchaseOnce = async (
     ensureSufficientDeposit(availableDeposit, requiredDeposit);
     await notifyStep(3, TOTAL_STEPS, progressDescription(3, TOTAL_STEPS));
 
-    let purchasePreparation = await preparePurchaseSurfaceForBuying(
-      page,
-      baseUrl,
-      selectors,
-      config.purchase.gameCount,
-      logger
-    );
-    let purchaseSurface = purchasePreparation.purchaseSurface;
-
-    try {
-      await clickByCandidates(
-        purchaseSurface,
-        selectors,
-        selectors.purchaseButton,
-        AppErrorCode.ERR06_PURCHASE_FAILURE,
-        "구매하기 버튼을 찾지 못했습니다.",
-        { preferAttachedDomClick: true }
-      );
-    } catch (error) {
-      if (
-        error instanceof AppError &&
-        error.code === AppErrorCode.ERR06_PURCHASE_FAILURE &&
-        shouldRetryAfterLostPurchaseSurface(
-          page.context().pages().length,
-          error.details?.purchaseStageSnapshot as { counts?: Record<string, number>; bodyPreview?: string } | undefined
-        )
-      ) {
-        logger.warn("구매 팝업이 유실되어 구매 준비를 다시 시도합니다.", {
-          openPages: page.context().pages().length,
-          purchaseStageSnapshot: error.details?.purchaseStageSnapshot
-        });
-        purchasePreparation = await preparePurchaseSurfaceForBuying(
-          page,
-          baseUrl,
-          selectors,
-          config.purchase.gameCount,
-          logger
-        );
-        purchaseSurface = purchasePreparation.purchaseSurface;
+    let purchaseSurface = (
+      await preparePurchaseSurfaceForBuying(page, baseUrl, selectors, config.purchase.gameCount, logger)
+    ).purchaseSurface;
+    const maxPurchaseClickAttempts = 3;
+    for (let purchaseClickAttempt = 1; purchaseClickAttempt <= maxPurchaseClickAttempts; purchaseClickAttempt += 1) {
+      try {
         await clickByCandidates(
           purchaseSurface,
           selectors,
@@ -1292,7 +1260,31 @@ export const runLotteryPurchaseOnce = async (
           "구매하기 버튼을 찾지 못했습니다.",
           { preferAttachedDomClick: true }
         );
-      } else {
+        break;
+      } catch (error) {
+        if (
+          error instanceof AppError &&
+          error.code === AppErrorCode.ERR06_PURCHASE_FAILURE &&
+          shouldRetryAfterLostPurchaseSurface(
+            purchaseClickAttempt,
+            maxPurchaseClickAttempts,
+            error.details?.purchaseStageSnapshot as
+              | { counts?: Record<string, number>; bodyPreview?: string }
+              | undefined
+          )
+        ) {
+          logger.warn("구매 팝업이 유실되어 구매 준비를 다시 시도합니다.", {
+            purchaseClickAttempt,
+            maxPurchaseClickAttempts,
+            openPages: page.context().pages().length,
+            purchaseStageSnapshot: error.details?.purchaseStageSnapshot
+          });
+          purchaseSurface = (
+            await preparePurchaseSurfaceForBuying(page, baseUrl, selectors, config.purchase.gameCount, logger)
+          ).purchaseSurface;
+          continue;
+        }
+
         throw error;
       }
     }

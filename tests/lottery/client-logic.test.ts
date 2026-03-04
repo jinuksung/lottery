@@ -229,7 +229,7 @@ describe("lottery/client logic", () => {
 
   test("retries purchase preparation when the popup disappears and the surface goes blank", () => {
     expect(
-      shouldRetryAfterLostPurchaseSurface(1, {
+      shouldRetryAfterLostPurchaseSurface(1, 3, {
         counts: {
           purchaseButton: 0,
           selectionConfirmButton: 0,
@@ -241,7 +241,7 @@ describe("lottery/client logic", () => {
       })
     ).toBe(true);
     expect(
-      shouldRetryAfterLostPurchaseSurface(2, {
+      shouldRetryAfterLostPurchaseSurface(3, 3, {
         counts: {
           purchaseButton: 0,
           selectionConfirmButton: 0,
@@ -253,7 +253,7 @@ describe("lottery/client logic", () => {
       })
     ).toBe(false);
     expect(
-      shouldRetryAfterLostPurchaseSurface(1, {
+      shouldRetryAfterLostPurchaseSurface(1, 3, {
         counts: {
           purchaseButton: 1,
           selectionConfirmButton: 0,
@@ -265,7 +265,7 @@ describe("lottery/client logic", () => {
       })
     ).toBe(false);
     expect(
-      shouldRetryAfterLostPurchaseSurface(1, {
+      shouldRetryAfterLostPurchaseSurface(1, 3, {
         counts: {
           purchaseButton: 0,
           selectionConfirmButton: 0,
